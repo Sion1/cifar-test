@@ -226,6 +226,82 @@ own run with the iter's `exp_name`.
 
 ---
 
+## GitHub integration (optional, recommended)
+
+The loop runs correctness-equivalently on a local-only repo, but a
+GitHub remote turns each iteration into an auditable artifact. **Recommended
+but never required.**
+
+What you get with a remote configured:
+
+- Every analyzed iter becomes a branch `autoresearch/iter-NNN` with the
+  config diff, log, viz outputs, and consensus verdict, browsable on
+  GitHub.
+- `git_iter_commit.sh` auto-pushes the branch and opens a PR via `gh api`,
+  so you review iterations as PRs instead of digging through `logs/`.
+- The dashboard (`docs/autoresearch_dashboard/`) and the design flowcharts
+  (`docs/`) render directly on GitHub Pages or in the file viewer.
+- Multi-host runs converge on a single shared remote.
+
+### Setup (one-time)
+
+If you skipped git/push during step 2's onboarding, you can enable it
+later by either re-running the setup script or doing it manually:
+
+```bash
+# 1. init repo (if not already a git repo)
+git init -b main
+
+# 2. add your fork as the remote
+git remote add origin git@github.com:<you>/agentic-research-assistant-fork.git
+git push -u origin main
+
+# 3. flip the auto-push flag in state/.env (loop.sh sources this)
+echo "export AUTORES_GIT_AUTOPUSH=1" >> state/.env
+
+# 4. authenticate gh CLI so PRs can be auto-created
+gh auth login
+```
+
+Re-running the interactive setup is equivalent and updates `state/.env`
+for you:
+
+```bash
+bash scripts/first_launch_setup.sh        # answer Y to git + push
+```
+
+Or non-interactively (for agents):
+
+```bash
+bash scripts/first_launch_setup.sh --non-interactive \
+    --python "$(which python3)" --data-root ./data \
+    --git --push --remote-url git@github.com:<you>/<repo>.git \
+    --no-wandb
+```
+
+### Toggling auto-push
+
+```bash
+export AUTORES_GIT_AUTOPUSH=1   # default after onboarding with --push
+export AUTORES_GIT_AUTOPUSH=0   # commit per-iter branches locally only, no push
+```
+
+The `loop.sh` and `git_iter_commit.sh` paths read this on every tick, so
+you can change your mind without restarting anything — toggle the env
+var (or edit `state/.env`) and the next iter picks it up.
+
+### When NOT to enable push
+
+- The repo is private and you don't have a GitHub account ready
+- You're benchmarking on data that can't leave the local network
+- You want to review/squash commits before they leave the machine
+
+In any of those cases, leave `AUTORES_GIT_AUTOPUSH=0` (or pass `--no-push`
+during setup). Per-iter branches still get committed locally — you can
+push them yourself later with `git push origin autoresearch/iter-NNN`.
+
+---
+
 ## Adapting to YOUR research
 
 These five files are where you customize:
