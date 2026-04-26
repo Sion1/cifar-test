@@ -86,34 +86,72 @@ DECISION=$(awk '/^## 7\. Decision/{flag=1; next} /^## 8\./{flag=0} flag && NF{pr
 # `git update-ref` recovery + PR #9 needed.
 PREV_BRANCH="main"
 
+# git_checked: run a git command and HONOR its exit code.
+#
+# Why this exists: the original script piped every git invocation through
+# `2>&1 | tail -1 | sed ...` for cosmetic logging. Bash pipelines propagate
+# the LAST command's rc (sed's, which is always 0), so `git checkout -b
+# BRANCH main` would silently fail on a dirty working tree, leave HEAD where
+# it was, and the script blissfully continued — committing iter NNN onto
+# the previous iter's branch and never creating refs/heads/BRANCH. The
+# `git push origin BRANCH` step then died with "src refspec BRANCH does
+# not match any" and the per-iter PR was lost.
+#
+# Bug history: 2026-04-26 17:01 (Hysyn-ZSL-v3-SUN-autoresearch iter010,
+# repeating the iter009 16:40 incident). Manual `git update-ref` rescue +
+# PR #10 needed. Reflog showed `checkout: moving from iter-008 to iter-008`
+# — the `-b iter-009 main` checkout had been refused and ignored.
+#
+# This wrapper: runs git, captures stderr to a temp file, uses the real
+# rc, mirrors stderr to driver.log, and exits the entire script on
+# failure. Cosmetic single-line tail still happens for stdout.
+git_checked() {
+    local _err _rc
+    _err=$(mktemp)
+    git "$@" 2>"$_err"
+    _rc=$?
+    if [ $_rc -ne 0 ]; then
+        log "FATAL: git $* (exit $_rc)"
+        # mirror full stderr into the log so the cause is visible
+        sed 's/^/  /' "$_err" | tee -a "$LOG" >&2
+        rm -f "$_err"
+        exit 1
+    fi
+    rm -f "$_err"
+    return 0
+}
+
 # Defensive realign: if HEAD drifted from a prior iter that didn't clean up,
 # move it back to main BEFORE doing anything else. Working-tree restoration
 # below relies on PREV_BRANCH being main.
+#
+# `-f` forces past a dirty tracked-file state — the prior iter's restore
+# step leaves untracked iter outputs which git checkout tolerates, but
+# tracked-file conflicts (rare but possible after a botched merge) would
+# otherwise refuse the checkout silently. Untracked files are NOT touched
+# by `-f`, so iter outputs in the working tree are safe.
 _CURRENT_HEAD=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 if [ -n "$_CURRENT_HEAD" ] && [ "$_CURRENT_HEAD" != "main" ]; then
     log "WARNING: HEAD drifted to $_CURRENT_HEAD — realigning to main before commit"
-    git checkout main 2>&1 | tail -1 | sed "s/^/  /"
+    git_checked checkout -f main
 fi
 
 # Create or switch to the per-iter branch (off main, not off whatever was checked out)
 git fetch origin "$PREV_BRANCH" 2>/dev/null || true
 if git show-ref --verify --quiet "refs/heads/${BRANCH}"; then
     log "switching to existing branch ${BRANCH}"
-    git checkout "$BRANCH" 2>&1 | tail -1 | sed "s/^/  /"
+    git_checked checkout "$BRANCH"
 else
     log "creating new branch ${BRANCH} off main"
-    git checkout -b "$BRANCH" main 2>&1 | tail -1 | sed "s/^/  /"
+    git_checked checkout -b "$BRANCH" main
 fi
 
-# Verify the checkout actually succeeded — if HEAD is detached or sitting on
-# a different branch, an orphan commit will be made and the push will fail
-# with "src refspec ... does not match any". That bug burned iter009 in
-# Hysyn-ZSL-v3-SUN-autoresearch on 2026-04-26. Abort loudly instead of
-# silently producing an orphan.
+# Belt-and-braces: verify HEAD really moved. git_checked already aborted on
+# rc!=0, but we check the symbolic ref as a final sanity gate in case some
+# future git plumbing change lets a checkout return 0 without moving HEAD.
 _HEAD_AFTER_CHECKOUT=$(git symbolic-ref --short HEAD 2>/dev/null || echo "<detached>")
 if [ "$_HEAD_AFTER_CHECKOUT" != "$BRANCH" ]; then
-    log "FATAL: checkout did not land on $BRANCH (HEAD=$_HEAD_AFTER_CHECKOUT) — aborting"
-    log "       refusing to commit on the wrong ref; investigate before retrying"
+    log "FATAL: checkout returned 0 but HEAD=$_HEAD_AFTER_CHECKOUT (expected $BRANCH) — aborting"
     exit 5
 fi
 
@@ -142,7 +180,7 @@ git add -u src/ train.py 2>/dev/null || true
 # Check if there's anything to commit
 if git diff --cached --quiet; then
     log "nothing to commit for iter ${ITER_PAD}"
-    git checkout "$PREV_BRANCH" 2>&1 | tail -1 | sed "s/^/  /"
+    git_checked checkout -f "$PREV_BRANCH"
     exit 0
 fi
 
@@ -175,14 +213,16 @@ Full report: logs/iteration_${ITER_PAD}.md
 This branch awaits user review before merging to main.
 EOF
 
-git commit -F "$MSG_FILE" 2>&1 | tail -3 | sed "s/^/  /"
+# Capture commit rc directly (no pipeline — that's what hid the iter009/010
+# checkout failures). stderr still goes to driver.log via tee.
+git commit -F "$MSG_FILE" >>"$LOG" 2>&1
 COMMIT_RC=$?
 COMMIT_SHA=$(git rev-parse --short HEAD)
 rm -f "$MSG_FILE"
 
 if [ "$COMMIT_RC" -ne 0 ]; then
-    log "ERROR: git commit failed (rc=$COMMIT_RC)"
-    git checkout "$PREV_BRANCH" 2>/dev/null
+    log "ERROR: git commit failed (rc=$COMMIT_RC) — see driver.log for details"
+    git checkout -f "$PREV_BRANCH" >/dev/null 2>&1 || true
     exit 1
 fi
 
@@ -239,8 +279,9 @@ Consensus: \`logs/iteration_${ITER_PAD}.consensus.final.md\` (when ready)
     fi
 fi
 
-# Switch back to previous branch
-git checkout "$PREV_BRANCH" 2>&1 | tail -1 | sed "s/^/  /"
+# Switch back to previous branch (force past any tracked-file conflicts —
+# untracked iter outputs are NOT touched, they're restored explicitly below).
+git_checked checkout -f "$PREV_BRANCH"
 
 # Restore iter outputs to PREV_BRANCH's working tree as dirty/untracked, so
 # downstream consumers on this branch (consensus_iter.sh reads the .md;
