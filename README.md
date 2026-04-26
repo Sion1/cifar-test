@@ -33,9 +33,8 @@ agentic-research-assistant/
 │   ├── visualize_cam.py             ← demo: Grad-CAM
 │   └── watch_loop.py                ← framework: live loop monitor (read-only)
 ├── docs/
-│   ├── autoresearch_design_by_claude/   ← task-specific flowcharts (example)
-│   ├── codex_flowcharts/                ← codex's review flowcharts
-│   └── autoresearch_general_by_claude/  ← framework architecture (read first)
+│   ├── autoresearch_general_by_claude/  ← framework architecture (read first)
+│   └── codex_flowcharts/                ← independent re-derivation (5 SVGs)
 └── .claude/skills/
     ├── README.md                            ← what to read / what to fill in
     ├── experiment-analysis/                 ← shipped: methodology skill (default)
@@ -185,7 +184,7 @@ These five files are where you customize:
 | **`program.md`** | Goal / module catalog / ablation matrix / verdict thresholds. **Keep the section structure** — agents parse it. |
 | **`CLAUDE.md`** | Baseline numbers + the matrix table; keep "Documented findings" empty for the agent to fill. |
 | **`run_experiment.sh`** | Point it at your `train.py`. Keep GPU selection + FINISH-line convention. |
-| **`scripts/generate_experiment_tree_web.py`** | `parse_metric_table()` + `group_for()` — replace `H/U/S/CZSL` with your metrics, replace `m1/m2/m3/m4` keywords with your ablation axes. |
+| **`scripts/generate_experiment_tree_web.py`** | `parse_metric_table()` + `group_for()` — replace the demo's `acc / per_class_acc` parser with your metrics, replace `aug / opt / sched` grouping keywords with your ablation axes. |
 | **`.claude/skills/_template_task_background/`** | Required. Copy → rename → fill in your field's domain knowledge (failure modes, named conventions, reading checklist). The agent re-reads this every analyze/propose tick. See `.claude/skills/README.md`. |
 
 These you **provide** (replace the demo's contents):
@@ -205,7 +204,7 @@ These are **task-agnostic framework code**, no edit needed:
 | `scripts/consensus_iter.sh` | 5-cycle multi-agent consensus on each iter's next-step. |
 | `scripts/parse_consensus.py` | Aggregator with 3-layer fallback for the propose-gate. |
 | `scripts/serve_dashboard.py` | Optional inline-editor server for user notes. |
-| `.claude/skills/experiment-analysis/` | The default analysis protocol skill — `hypothesis × evidence × verdict` rubric. Methodology is task-agnostic; only worked examples are GZSL-flavored. |
+| `.claude/skills/experiment-analysis/` | The default analysis protocol skill — `hypothesis × evidence × verdict` rubric. Methodology is task-agnostic; worked examples use the bundled CIFAR-10 demo. |
 
 ---
 
@@ -215,9 +214,8 @@ The framework's design is documented as flowcharts:
 
 | Diagram | What it shows |
 |---|---|
-| [docs/autoresearch_general_by_claude/](docs/autoresearch_general_by_claude/) | **Read first.** Architecture-level view, no domain terms. |
-| [docs/autoresearch_design_by_claude/](docs/autoresearch_design_by_claude/) | Same diagrams, instantiated for the original ZSL project as an example. |
-| [docs/codex_flowcharts/](docs/codex_flowcharts/) | Codex's independent re-derivation of the design (5 SVGs). |
+| [docs/autoresearch_general_by_claude/](docs/autoresearch_general_by_claude/) | **Read first.** Architecture-level view of the framework. |
+| [docs/codex_flowcharts/](docs/codex_flowcharts/) | An independent re-derivation of the design (5 SVGs) by a second LLM. |
 
 Key invariants you should know before modifying `loop.sh`:
 

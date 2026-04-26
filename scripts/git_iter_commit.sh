@@ -88,7 +88,8 @@ fi
 # generated for a Bug-verdict iter) does NOT abort the whole add and silently
 # leave nothing staged. Discovered 2026-04-25 via smoketest iter999/iter998.
 for _path in \
-    "configs/ablation_shm/SUN_v2_iter${ITER_PAD}_"*.yaml \
+    "configs/ablation/iter${ITER_PAD}_"*.yaml \
+    "configs/ablation/iter${ITER_PAD}.yaml" \
     "logs/iteration_${ITER_PAD}.md" \
     "figs/iter_${ITER_PAD}/" \
     "scripts/per_class_delta_iter${ITER_PAD}.py" \

@@ -1,310 +1,160 @@
-# Experiment report template
+# Deep-dive report template
 
-## How to use
-
-Copy the template below into your experiment directory as `REPORT.md`. Fill in each section. The filled example after the template shows what "good" looks like. Don't skip sections — write "not applicable" and one sentence why if a section doesn't fit. Skipped sections hide bugs.
-
-The verdict label is one of five, defined in the main SKILL: Success / Partial success / Failure / Noise / Bug. The confidence tag is one of three: High / Medium / Low, also defined in the main SKILL.
-
----
-
-## Template
+For Deep-dive analyses (per `SKILL.md` §Analysis depth), structure the
+write-up using this template. Copy it to `logs/iteration_NNN.md` and
+fill each section. The framework's `git_iter_commit.sh` parses headings
+to build the per-iter commit message, so **keep the section numbers and
+titles intact**.
 
 ```markdown
-# Experiment report — <short descriptive title>
-
-**Date:** YYYY-MM-DD
-**Experiment dir:** experiments/YYYY-MM-DD-name/
-**Baseline:** <method + commit hash / paper>
-**Seeds:** [0, 1, 2]  or  "single seed — see §3.3"
-**Verdict label:** Success / Partial success / Failure / Noise / Bug
-**Confidence:** High / Medium / Low
+# Iteration NNN — {short_name}
+Date: YYYY-MM-DD HH:MM | GPU: {id} | Duration: {h}
 
 ## 1. Hypothesis
+Two or three sentences. State precisely:
+- What issue you're trying to resolve.
+- Which ablation cell you're targeting.
+- The exact config delta vs the prior cell (single axis preferred).
 
-**Issue targeted (from prior analysis):**
-<one paragraph — what did we diagnose, where is the prior analysis documented?>
+Example: "Switch optimizer from SGD (lr=0.1, cosine) to AdamW (lr=1e-3,
+cosine, weight_decay=0.05) while keeping `augmentation: standard` and
+`epochs: 60`. Hypothesis: AdamW with appropriate weight decay matches
+SGD on CIFAR-10 within ±0.5 pp test accuracy and shows faster early
+convergence (epoch 5 acc ≥ 0.65 vs SGD's typical 0.55)."
 
-**Code change made:**
-<one paragraph — what was added/removed/modified, one sentence + commit hash>
+## 2. Falsification criterion
+What numeric or qualitative outcome would refute the hypothesis? Be
+specific — "accuracy doesn't go up" is not falsifiable enough.
 
-**Predicted effect if the change works:**
-- Quantitative: <e.g., "H rises 2+ points on CUB, driven by U rising; S may drop 1–2">
-- Qualitative: <e.g., "Grad-CAM center shifts from background to object bbox on off-center cases">
-- On which subset: <e.g., "improvement concentrated on off-center-object classes (list)">
+Example: "Falsified if (a) test_acc < SGD baseline by > 0.5 pp at epoch
+60, OR (b) test_acc at epoch 5 is below 0.6 (slower than SGD), OR (c)
+train loss at epoch 5 is higher than SGD's despite AdamW's reputation
+for fast early convergence."
 
-**What would falsify:**
-<If we see ____, the change does not work as claimed.>
+## 3. Changes made
+The YAML diff and any code changes. Show the actual diff:
 
-## 2. Headline
+```diff
+-training:
+-  optimizer: sgd
+-  lr: 0.1
+-  momentum: 0.9
+-  weight_decay: 5.0e-4
++training:
++  optimizer: adamw
++  lr: 1.0e-3
++  weight_decay: 0.05
+   scheduler: cosine
+   epochs: 60
+```
 
-**One-line verdict:** <e.g., "Partial success at Low confidence — H rose 1.0 on CUB and mechanism confirmed, but gain within single-seed noise band">
+If you edited `src/`, link to the commit / diff.
 
-| Metric | Baseline | New   | Δ    |
-|--------|----------|-------|------|
-| S      | __.__    | __.__ | ±__  |
-| U      | __.__    | __.__ | ±__  |
-| H      | __.__    | __.__ | ±__  |
+## 4. Results
 
-**Caveats:**
-- <e.g., "Single seed; Δ comparable to historical variance">
-- <e.g., "Off-center class list was derived from the same diagnostic run that motivated the change — held-out confirmation pending">
+Headline numbers in a comparison table:
 
-## 3. Accuracy analysis
+| Metric | Baseline (cell A) | Best so far | This run | Δ vs best | Δ vs cell A |
+|---|---|---|---|---|---|
+| test_acc  | 0.____  | 0.____  | 0.____  | ±0.___ | ±0.___ |
+| test_loss | _.___   | _.___   | _.___   | ±_.___ | ±_.___ |
+| top5_acc  | 0.____  | 0.____  | 0.____  | ±0.___ | ±0.___ |
+| train_acc | 0.____  | 0.____  | 0.____  | ±0.___ | ±0.___ |
+| best_epoch | __     | __      | __      |        |        |
 
-### 3.1 Full table
+Per-class summary if available:
 
-<expanded table; possibly with γ-sweep best-H column, AUSUC, or multiple datasets>
+| Class | Baseline | This run | Δ |
+|---|---|---|---|
+| airplane    | 0.___ | 0.___ | ±0.___ |
+| automobile  | 0.___ | 0.___ | ±0.___ |
+| ...         | ...   | ...   | ...    |
 
-### 3.2 Per-class patterns
+Note: signals worth highlighting, e.g. "hard pair (cat/dog) gained +2.5
+pp each while easy pair (truck/automobile) was within ±0.3 pp" — this
+is the shape of the result, not the average.
 
-<1–2 paragraphs: which classes improved, which regressed? Consistent with hypothesis?>
-<Optional: small table of top-5 improved and top-5 regressed classes>
+## 5. Visualization evidence
 
-### 3.3 Variance & sanity
+For each viz produced (per `program.md` §Mandatory):
 
-- Seeds: <report>
-- Sanity baselines unchanged? <yes/no, with values>
-- Calibration curve: <shifted / flattened / reshaped / unchanged>
+**Grad-CAM** (`figs/iter_NNN/cam.png`):
+- One sentence on what changed in the attention pattern relative to the
+  baseline. Did it move toward the object? Toward background?
+- Highlight 1–2 specific samples where the attention shift is most
+  visually clear.
 
-## 4. Visualization analysis
+**Feature t-SNE** (`figs/iter_NNN/tsne.png`):
+- Did class clusters tighten? Spread? Did the cat/dog overlap shrink?
+- Were there outlier samples that the baseline placed near the wrong
+  cluster but the new run placed correctly?
 
-Note: visualizations are supporting evidence, not causal proof. Combine with case analysis in §5.
-
-### 4.1 <Visualization type 1, e.g., Grad-CAM>
-
-<side-by-side figure: baseline vs new, on 4–6 representative images>
-<1–2 paragraphs: does it match the predicted qualitative effect from §1?>
-
-### 4.2 <Visualization type 2, e.g., t-SNE>
-
-<same pattern: figure + interpretation tied to hypothesis>
-
-### 4.3 <Visualization type 3, e.g., confusion matrix delta>
-
-<same>
-
-## 5. Case analysis
-
-### 5.1 Quadrant counts
-
-| | baseline correct | baseline wrong |
-|---|---|---|
-| **new correct** | __ (__%) | __ (__%) |
-| **new wrong** | __ (__%) | __ (__%) |
-
-Net change: __ samples (__%)
-
-### 5.2 Improvement cases (sample)
-
-| # | class | baseline | new | baseline attn | new attn | why did new succeed? |
-|---|---|---|---|---|---|---|
-| 1 | | | | | | |
-| 2 | | | | | | |
-| 3 | | | | | | |
-
-### 5.3 Regression cases (sample)
-
-Same structure. Plus:
-
-| Cause | Count | Note |
-|---|---|---|
-| (a) intended tradeoff | | |
-| (b) unrelated side-effect | | |
-| (c) noise / seed | | |
-| (d) test-set edge | | |
+**Per-class table** (`figs/iter_NNN/per_class.csv`):
+- Mean per-class accuracy.
+- Variance / spread (std across classes — narrowing is good).
+- Worst class accuracy (a "weakest link" indicator).
 
 ## 6. Verdict
+**Success** / **Partial** / **Failure** / **Noise** / **Bug**
 
-Three-part judgment:
-- **Issue resolved?** yes / partially / no — evidence: <which section>
-- **Accuracy direction:** up / flat / down — <Δ on H>
-- **Expected mechanism observed?** yes / partially / no — evidence: <which section>
+One paragraph defending the choice. Cite the three axes from the SKILL:
+- Did the targeted issue resolve? (yes / partially / no)
+- Which direction did the metric move? (up / flat / down)
+- Did the predicted mechanism appear in the visualizations? (yes / no /
+  unclear)
 
-**Label:** <Success | Partial success | Failure | Noise | Bug>
-**Confidence:** <High | Medium | Low>
+Combine these per the SKILL's verdict-labels table.
 
-**Reasoning:** <one paragraph applying the label definitions to the evidence above>
+Confidence level (one of: high / medium / low) with reason.
 
-**What would upgrade or downgrade the verdict:**
-<e.g., "Would upgrade to Success (Medium→High confidence) if seeds 1 and 2 show the same +1.0 H delta. Would downgrade to Noise if a second seed shows no movement on H.">
+## 7. Decision
 
-## 7. Next steps
+Based on the verdict, what to do next:
 
-- If Success: <next hypothesis>
-- If Partial success: <which tradeoff to address, or how to consolidate gain>
-- If Failure: <what to re-engineer, or whether to abandon the direction>
-- If Noise: <more seeds, or a stronger version of the change>
-- If Bug: <which bug-checklist items to verify>
+- **Keep the change?** (commit to the per-iter branch and propagate to
+  downstream cells, OR discard and revert)
+- **Which downstream cells does this affect?** (e.g. "if AdamW Success,
+  drop SGD from cells E and F as well")
+- **What follow-up is needed?** (a 2nd-seed replay, a wider sweep, a
+  different visualization)
 
-## 8. Appendix
+## 8. Next hypothesis
 
-- Full per-class accuracy tables
-- All visualization figures, not just the representative ones
-- Config diff against baseline (git diff output)
-- Training curves if relevant
+The single config delta you'll try in iter NNN+1. Be as concrete as in
+§1 — another loop tick will read this and act on it.
+
+Example: "Sweep AdamW weight decay {0.01, 0.05, 0.1, 0.2}. Hypothesis:
+optimum sits at 0.05 (current setting); going up reduces overfitting
+but costs raw acc, going down restores SGD-like train-test gap.
+Falsifies if 0.1 gives strictly higher test_acc than 0.05 by > 0.3 pp."
 ```
 
----
+## How the framework uses this report
 
-## Filled example — what "good" looks like
+1. The agent's analyze step writes this file directly to
+   `logs/iteration_NNN.md`.
+2. `scripts/git_iter_commit.sh` parses §1, §4, §6, §7 to build the
+   commit message + PR description.
+3. `scripts/parse_consensus.py` parses §6 (verdict) and §8 (next-step)
+   to build the consensus output.
+4. The propose phase of the next loop tick reads §8 verbatim as the
+   binding hypothesis for the next experiment.
 
-```markdown
-# Experiment report — Local attention module on CUB-GZSL
+If you change the section structure, update those three scripts in
+lockstep — otherwise the agent will silently produce malformed reports.
 
-**Date:** 2026-04-18
-**Experiment dir:** experiments/2026-04-18-local-attn-cub/
-**Baseline:** f-CLSWGAN (Xian 2018), re-run at commit a3f2c91
-**Seeds:** [0] — seeds 1, 2 running
-**Verdict label:** Partial success
-**Confidence:** Low
+## Length guidance
 
-## 1. Hypothesis
-
-**Issue targeted:**
-Earlier analysis (experiments/2026-04-10-diagnostic-gradcam/) showed that on 18 off-center-object classes in CUB, Grad-CAM consistently pointed to the image center even when the bird was in a corner. Per-class U on those 18 classes was 6.2% vs 24.1% on the other unseen classes — strong evidence of center-prior shortcut.
-
-**Code change:**
-Added a local attention module between ResNet-101 layer-4 and the semantic projection head, supervised softly by bbox priors (commit 8d4e102). The module learns a spatial weighting conditioned on the semantic query.
-
-**Predicted effect:**
-- Quantitative: U on the 18 off-center classes rises >10 points; U on centered-object classes flat or drops ≤2 points (tradeoff). Overall H rises 1–3 points.
-- Qualitative: Grad-CAM center shifts toward ground-truth bbox on the 18 classes.
-- S may drop 1–2 points (less center-shortcut benefit for seen training).
-
-**What would falsify:**
-If Grad-CAM center doesn't shift on the 18 target classes, or U on those classes doesn't improve, the attention module isn't doing its intended job.
-
-## 2. Headline
-
-**One-line:** Partial success at Low confidence — mechanism confirmed on target classes (U on 18 off-center classes rose 6.2 → 18.7), overall H rose 1.0 but within single-seed noise band.
-
-| Metric | Baseline | New | Δ |
+| Section | Quick | Standard | Deep dive |
 |---|---|---|---|
-| S | 54.8 | 52.1 | −2.7 |
-| U | 43.2 | 46.9 | +3.7 |
-| H | 48.3 | 49.3 | +1.0 |
+| §1 Hypothesis             | 1 sentence | 2-3 sentences  | 1 paragraph + falsification |
+| §2 Falsification          | (skip)     | 1 sentence     | 1 paragraph |
+| §3 Changes                | 1 line     | YAML diff      | YAML + code diff + rationale |
+| §4 Results table          | 1 row      | full table     | full + per-class |
+| §5 Visualizations         | (skip)     | 1 sentence × 2 | 1 paragraph × 3 |
+| §6 Verdict                | 1 sentence | 1 paragraph    | 1-2 paragraphs + confidence |
+| §7 Decision               | (skip)     | bullet list    | full reasoning |
+| §8 Next hypothesis        | (skip)     | 1 sentence     | sharpened, ready-to-execute |
 
-**Caveats:**
-- Single seed. Seeds 1 and 2 running.
-- Off-center class list derived from the same diagnostic run that motivated the change — circular. Held-out validation pending.
-
-## 3. Accuracy analysis
-
-### 3.1 Full table
-
-| | Baseline | New | Δ |
-|---|---|---|---|
-| S | 54.8 | 52.1 | −2.7 |
-| U | 43.2 | 46.9 | +3.7 |
-| H (γ=0) | 48.3 | 49.3 | +1.0 |
-| H (best γ) | 51.7 | 53.4 | +1.7 |
-
-Best γ moved from 0.4 (baseline) to 0.25 (new) — consistent with less seen-bias.
-
-### 3.2 Per-class patterns
-
-- 18 off-center target classes: U 6.2 → 18.7 (+12.5 avg; +22.1 on top-5 most off-center).
-- Remaining 32 unseen: 44.6 → 44.3 (−0.3, within noise).
-- Seen: drop concentrated on 8 pathologically centered classes — baseline was free-riding on center prior.
-
-Matches the prediction closely.
-
-### 3.3 Variance & sanity
-
-- Single seed. Historical variance on this architecture on CUB H is ±0.5, so current Δ of +1.0 is marginal pending seed replication.
-- CLIP zero-shot unchanged (37.2 → 37.3, decimal noise).
-- γ sweep curve flattened, as predicted.
-
-## 4. Visualization analysis
-
-### 4.1 Grad-CAM
-
-Figure 1: six off-center target-class test images, baseline vs new side-by-side.
-
-On 6/6 shown cases (and 14/18 on the broader check), new attention's top-10% pixels overlap with ground-truth bbox (IoU > 0.3). Baseline was center-biased in all 6. **Qualitatively supports the mechanism hypothesis.**
-
-On 2 of the 18 classes, attention overshoots into adjacent tree branches. Minor edge case; noted for next iteration. Visual evidence combined with case analysis in §5 — not treating maps as proof on their own.
-
-### 4.2 t-SNE of unseen features
-
-Figure 2: t-SNE of unseen visual features, colored by class.
-
-Clusters in similar positions overall; 18 off-center classes' clusters appear slightly tighter by visual inspection. No compactness metric computed; adding to next iteration.
-
-## 5. Case analysis
-
-### 5.1 Quadrant counts (unseen test set)
-
-| | baseline correct | baseline wrong |
-|---|---|---|
-| **new correct** | 412 | 167 |
-| **new wrong** | 93 | 528 |
-
-Net: +74 samples on unseen.
-
-### 5.2 Improvement cases
-
-Sampled 15 from ② (stratified by class). 12/15 are off-center target classes; for 10/12 the new attention overlaps the bird and baseline attention was centered. Mechanism explanation for improvements: consistent.
-
-### 5.3 Regression cases
-
-Sampled 20 from ③.
-
-| Cause | Count | Note |
-|---|---|---|
-| (a) intended tradeoff — new attention locks on a nearby texture, bird features not yet matured | 14 | concentrated on tiny-bird cases |
-| (a) intended tradeoff — partial occlusion; new loses global context | 4 | scene cue shortcut broken |
-| (c) noise | 2 | no clear pattern |
-
-18/20 regressions are (a) intended tradeoff. Change works as designed.
-
-## 6. Verdict
-
-- **Issue resolved?** Yes on the 18 targeted classes (§3.2, §4.1). Secondary overshoot on 2 classes (§4.1).
-- **Accuracy direction:** up (+1.0 on H, +1.7 with calibration).
-- **Expected mechanism observed?** Yes — attention shift in §4.1, regression causes in §5.3 consistent with the intended tradeoff.
-
-**Label:** Partial success.
-**Confidence:** Low.
-
-**Reasoning:** Issue is resolved on the targeted classes. Mechanism fires as designed (visualizations + regression cause pattern). Accuracy is net positive but within single-seed noise — hence Partial, and confidence is Low pending replication.
-
-**What would upgrade or downgrade:**
-- Upgrade to Success (and Medium confidence) if seeds 1 and 2 hold the +1.0 H delta.
-- Upgrade to High confidence if additionally the off-center-class U improvement replicates across seeds with small std.
-- Downgrade to Noise if seed replication shows H Δ within ±0.5 and no consistent off-center-class improvement.
-
-## 7. Next steps
-
-1. Finish seeds 1 and 2 to confirm Δ isn't noise (addresses the Low confidence).
-2. Tiny-bird cases regressed — add scale-aware branch in next iteration.
-3. Test on AwA2 to check mechanism transfer.
-4. Consider two-stream (local + global) to recover occlusion performance without losing attention shift.
-
-## 8. Appendix
-
-<per-class full table, config diff, full figure set>
-```
-
-## Why this example is good
-
-- **Predictions written before results** (§1); §3.2 and §4.1 explicitly compare against them.
-- **Headline not oversold:** +1.0 within noise, explicitly flagged. Confidence tagged as Low matches this reality.
-- **Visualization analysis ties back to hypothesis** — not "attention looks nice", but "14/18 target classes show bbox overlap >0.3".
-- **Regression analysis done even though net accuracy rose.** Author identifies the tiny-bird tradeoff as the next-iteration target.
-- **Verdict is three-part + label + confidence**, not a single word.
-- **Explicit upgrade/downgrade paths** make the next run's decision criterion clear in advance — prevents post-hoc reinterpretation.
-- **Next steps are specific and hypothesis-driven**, not "try more things."
-
-## Anti-example — don't do this
-
-```markdown
-# Experiment — added local attention
-
-H went from 48.3 to 49.3. Nice. Let's ship it.
-Attention maps look better (see fig).
-TODO: more seeds.
-```
-
-Problems: no hypothesis, no prediction, no falsification, "looks better" without criteria, single-seed treated as conclusive, no regression analysis, no verdict structure, no label, no confidence, vague next step.
+The agent should match the depth to the user's request. Don't pad
+sections when the data doesn't support the depth.

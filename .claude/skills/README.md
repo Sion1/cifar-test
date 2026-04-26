@@ -24,7 +24,7 @@ whatever the agent should keep in mind while working in your domain.
 
 | Skill | Purpose | Action |
 |---|---|---|
-| [`experiment-analysis/`](experiment-analysis/) | The framework's **default analysis protocol**. Encodes the `hypothesis × evidence × verdict` rubric the loop's analyze step relies on. Originally written for ZSL/GZSL research but the methodology generalizes — only the worked examples are domain-specific. | **Keep as-is** unless you want to retune the verdict thresholds. |
+| [`experiment-analysis/`](experiment-analysis/) | The framework's **default analysis protocol**. Encodes the `hypothesis × evidence × verdict` rubric the loop's analyze step relies on. The methodology is task-agnostic; the worked examples use the bundled CIFAR-10 + ResNet-34 demo. | **Keep as-is** unless you want to retune the verdict thresholds. |
 | [`_template_task_background/`](_template_task_background/) | Empty template for **your domain knowledge** skill. The framework relies on having one of these to give the agent field-specific context (named failure modes, benchmark conventions, what counts as a sound result in your area). | **You must fill this in.** See instructions below. |
 
 ## Adding your task-background skill (required)
@@ -52,8 +52,9 @@ mv .claude/skills/<your-task-name>/SKILL.md.template \
 Examples of what your skill should cover (tailor to your area):
 
 - **Foundational definitions** — terms that get conflated in your field
-  (e.g. the ZSL skill leads with "ZSL vs GZSL" because that's the #1 source
-  of unsound experiments).
+  (e.g. an image-classification skill should lead with "test-set
+  contamination" because mixing train/test through aug pipelines is a
+  common silent failure).
 - **Standard splits / benchmarks / metrics** — which version of each you use
   and what each one tests.
 - **Named failure modes** — the failure modes your community has labeled, so

@@ -36,7 +36,7 @@ class IterRow:
     pid: str
     started_at: str
     finished_at: str
-    best_h: str
+    best_metric: str   # column 9 of state.tsv — name varies by launcher (best_metric / best_h / best_acc / ...)
     verdict: str
 
 
@@ -80,7 +80,11 @@ def read_state(path: Path) -> list[IterRow]:
                     pid=raw.get("pid", ""),
                     started_at=raw.get("started_at", ""),
                     finished_at=raw.get("finished_at", ""),
-                    best_h=raw.get("best_h", ""),
+                    # state.tsv column 9: try common names, fall back to whatever the launcher used
+                    best_metric=(raw.get("best_metric")
+                                 or raw.get("best_h")
+                                 or raw.get("best_acc")
+                                 or list(raw.values())[8] if len(raw) > 8 else ""),
                     verdict=raw.get("verdict", ""),
                 )
             )
@@ -169,9 +173,15 @@ def load_ckpt_metrics(exp_name: str) -> dict[str, Any]:
         import torch  # type: ignore
     except Exception:
         return {}
-    candidates = sorted((ROOT / "runs_autoresearch" / exp_name).glob("*/best_h.pth"))
-    if not candidates:
-        candidates = sorted((ROOT / "runs_autoresearch" / exp_name).glob("*/final.pth"))
+    # Try common output-root layouts. Adapt for your launcher if it writes
+    # checkpoints elsewhere (e.g. add `runs_<your_pkg>/<exp>/best.pth`).
+    candidates: list[Path] = []
+    for root in ("runs", "runs_autoresearch"):
+        candidates += sorted((ROOT / root / exp_name).glob("*/best.pth"))
+        candidates += sorted((ROOT / root / exp_name).glob("best.pth"))
+        candidates += sorted((ROOT / root / exp_name).glob("*/best_h.pth"))   # legacy
+        candidates += sorted((ROOT / root / exp_name).glob("*/final.pth"))
+        candidates += sorted((ROOT / root / exp_name).glob("final.pth"))
     if not candidates:
         return {}
     try:
@@ -205,22 +215,35 @@ def config_values(config_path: str) -> dict[str, str]:
 
 
 def group_for(exp_name: str, config: dict[str, str], iter_id: int) -> tuple[str, str, str]:
+    """Map an experiment to a group node in the tree.
+
+    The framework's dashboard groups iters by the *axis* their hypothesis
+    targets, NOT by the absolute config. Adapt the keyword rules below for
+    your project — the only contract is that every iter ends up in some
+    group, and the group order in `build_tree()` reflects how you want the
+    tree to read top-to-bottom.
+
+    Default rules below match the bundled CIFAR-10 + ResNet-34 demo. The
+    exp_name keywords come from the demo's ablation/<axis>.yaml files.
+    """
     name = exp_name.lower()
     if iter_id == 999 or "smoketest" in name:
-        return "sanity", "Sanity / Smoke", "系统健康检查与流水线验证"
-    if "pure" in name:
-        return "baseline", "Baseline", "零模块或基础模型参考点"
-    if "m1_m2" in name or ("is_prior" in config and config.get("is_prior", "").lower() == "true"):
-        return "m1_m2", "M1 + M2 Prior", "局部分支叠加先验机制"
-    if "m1_m4" in name or "vfa" in name:
-        return "m1_m4", "M1 + M4 VFA", "局部分支叠加特征聚合机制"
-    if "m1_m3" in name:
-        return "m1_m3", "M1 + M3 Combo", "局部分支与原型正则组合"
-    if "m3_only" in name or config.get("use_ap_loss", "").lower() == "true":
-        return "m3", "M3 Sweep", "原型去相关强度扫描"
-    if "residual" in name or "m1" in name:
-        return "m1", "M1 Local", "局部残差注意力分支"
-    return "other", "Other", "其他探索"
+        return "sanity", "Sanity / Smoke", "Pipeline health checks & smoketests"
+    if "no_aug" in name or "noaug" in name:
+        return "baseline", "Baseline (no aug)", "Bare baseline — no data augmentation"
+    if "autoaug" in name or "auto_aug" in name:
+        return "aug",      "Augmentation",     "Augmentation strength sweep"
+    if "adamw" in name or "adam" in name:
+        return "opt",      "Optimizer",        "Optimizer family / hyperparameter sweep"
+    if "multistep" in name or "schedule" in name:
+        return "sched",    "LR schedule",      "Learning-rate schedule variants"
+    if "long" in name or "epochs" in name:
+        return "budget",   "Training budget",  "Epoch / step-budget variants"
+    if "wd" in name or "weight_decay" in name:
+        return "reg",      "Regularization",   "Weight decay / dropout / smoothing variants"
+    if "baseline" in name or "default" in name:
+        return "baseline", "Baseline",         "Reference baseline"
+    return "other",        "Other",            "Unclassified experiments"
 
 
 def display_status(row: IterRow) -> str:
@@ -251,25 +274,27 @@ def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, siblin
     report = report_path.read_text(encoding="utf-8", errors="replace") if report_path.exists() else ""
     cfg = config_values(row.config)
     gamma = load_gamma_json(row.iter_id)
-    ckpt = load_ckpt_metrics(row.exp_name) if row.status == "running" or not row.best_h else {}
+    ckpt = load_ckpt_metrics(row.exp_name) if row.status == "running" or not row.best_metric else {}
     parsed = parse_metric_table(report) if report else {}
 
-    h = row.best_h or fmt_num(ckpt.get("H") or ckpt.get("best_h") or gamma.get("best_H"))
-    u = parsed.get("U") or fmt_num(ckpt.get("U"))
-    s = parsed.get("S") or fmt_num(ckpt.get("S"))
-    czsl = parsed.get("CZSL") or fmt_num(ckpt.get("CZSL") or ckpt.get("best_czsl"))
-    ausuc = parsed.get("AUSUC") or fmt_num(gamma.get("AUSUC") or ckpt.get("AUSUC"))
-    best_gamma = parsed.get("best_γ (per-class)") or parsed.get("best_gamma_pc") or fmt_num(gamma.get("best_gamma") or ckpt.get("best_gamma_pc"))
+    # Headline metric pulled from (in order): state.tsv column 9 (anything the
+    # launcher writes), the iter report's parsed table, and the saved
+    # checkpoint's `metrics` dict. Adapt the alternate keys below for your
+    # project — the demo uses `acc` and `best_acc`.
+    primary = (row.best_metric
+               or parsed.get("acc") or parsed.get("test_acc") or parsed.get("metric")
+               or fmt_num(ckpt.get("acc") or ckpt.get("best_acc") or ckpt.get("test_acc")))
+    secondary = parsed.get("loss") or fmt_num(ckpt.get("loss") or ckpt.get("best_loss"))
+    extra1 = parsed.get("top5") or fmt_num(ckpt.get("top5"))
+    extra2 = parsed.get("epoch") or fmt_num(ckpt.get("best_epoch"))
 
     pieces = []
-    if h:
-        pieces.append(f"H={h}")
-    if u:
-        pieces.append(f"U={u}")
-    if s:
-        pieces.append(f"S={s}")
-    if ausuc:
-        pieces.append(f"AUSUC={ausuc}")
+    if primary:
+        pieces.append(f"acc={primary}")
+    if secondary:
+        pieces.append(f"loss={secondary}")
+    if extra1:
+        pieces.append(f"top5={extra1}")
     metric = "  ".join(pieces) if pieces else ("running" if row.status == "running" else "")
 
     hypothesis = compact(section(report, 1), 620)
@@ -343,12 +368,10 @@ def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, siblin
             "pid": row.pid,
             "started_at": row.started_at,
             "finished_at": row.finished_at,
-            "best_h": h,
-            "U": u,
-            "S": s,
-            "CZSL": czsl,
-            "AUSUC": ausuc,
-            "best_gamma": best_gamma,
+            "acc": primary,
+            "loss": secondary,
+            "top5": extra1,
+            "best_epoch": extra2,
         },
     )
 
@@ -362,7 +385,7 @@ def build_tree(rows: list[IterRow]) -> dict[str, Any]:
         groups.setdefault(key, {"id": key, "name": label, "detail": detail, "rows": []})
         groups[key]["rows"].append(r)
 
-    order = ["baseline", "m1", "m1_m2", "m1_m4", "m3", "m1_m3", "sanity", "other"]
+    order = ["baseline", "aug", "opt", "sched", "reg", "budget", "sanity", "other"]
     group_items = [groups[k] for k in order if k in groups]
     group_count = len(group_items)
     x_group = 390
@@ -387,14 +410,14 @@ def build_tree(rows: list[IterRow]) -> dict[str, Any]:
             build_iter_node(r, x_group, y, idx, len(group["rows"]))
             for idx, r in enumerate(sorted(group["rows"], key=lambda rr: rr.iter_id))
         ]
-        best_h_vals = []
+        metric_vals = []
         for child in children:
             try:
-                best_h_vals.append(float(child.meta.get("best_h") or "nan"))
+                metric_vals.append(float(child.meta.get("acc") or "nan"))
             except Exception:
                 pass
-        best_h_vals = [v for v in best_h_vals if not math.isnan(v)]
-        metric = f"best H={max(best_h_vals):.2f}" if best_h_vals else ""
+        metric_vals = [v for v in metric_vals if not math.isnan(v)]
+        metric = f"best acc={max(metric_vals):.2f}" if metric_vals else ""
         nodes.append(
             {
                 "id": group["id"],
@@ -404,20 +427,20 @@ def build_tree(rows: list[IterRow]) -> dict[str, Any]:
                 "x": x_group,
                 "y": y,
                 "metric": metric,
-                "notes": f"{len(children)} 个实验点",
+                "notes": f"{len(children)} experiments",
                 "subs": [child.__dict__ for child in children],
             }
         )
 
-    all_h = []
+    all_metrics = []
     for group in nodes:
         for child in group["subs"]:
             try:
-                all_h.append((float(child["meta"].get("best_h")), child["name"]))
+                all_metrics.append((float(child["meta"].get("acc")), child["name"]))
             except Exception:
                 pass
-    best = max(all_h, default=None)
-    task_metric = f"current best {best[1]} · H={best[0]:.2f}" if best else ""
+    best = max(all_metrics, default=None)
+    task_metric = f"current best {best[1]} · acc={best[0]:.2f}" if best else ""
     generated = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     node_summaries = read_node_summaries(USER_SUMMARIES)
     return {
@@ -726,7 +749,7 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
   }
   function nodeSearchText(node){
     const m=node.meta||{};
-    return [node.name,node.detail,node.metric,node.idea,node.reason,node.notes,m.exp_name,m.best_h,m.AUSUC,m.best_gamma].join(' ').toLowerCase();
+    return [node.name,node.detail,node.metric,node.idea,node.reason,node.notes,m.exp_name,m.acc,m.loss,m.top5].join(' ').toLowerCase();
   }
   function nodeMatchesSearch(node){
     const q=state.search.trim().toLowerCase();
@@ -760,7 +783,7 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
     svg.innerHTML=edges+dots;
   }
   function metaLines(node){
-    const m=node.meta||{}; const keys=['exp_name','best_h','U','S','CZSL','AUSUC','best_gamma','gpu','pid','started_at','finished_at'];
+    const m=node.meta||{}; const keys=['exp_name','acc','loss','top5','best_epoch','gpu','pid','started_at','finished_at'];
     return keys.filter(k=>m[k]).map(k=>`${k}: ${m[k]}`).join('\n');
   }
   function renderDetailContent(){
@@ -841,15 +864,15 @@ g[data-id]:hover .halo,g[data-id].sel .halo,g[data-id].cmp .halo{opacity:.18}g[d
   }
   function visualByLabel(node,label){return (node?.visuals||[]).find(v=>v.label===label)}
   function metricBlock(node){
-    const m=node?.meta||{}; const keys=['best_h','U','S','CZSL','AUSUC','best_gamma'];
+    const m=node?.meta||{}; const keys=['acc','loss','top5','best_epoch'];
     return keys.filter(k=>m[k]).map(k=>`${k}: ${m[k]}`).join('\n') || (node?.metric||'');
   }
   function compactMetrics(node){
     const m=node?.meta||{};
     return [
-      ['H',m.best_h||'--'],
-      ['AUSUC',m.AUSUC||'--'],
-      ['best_gamma',m.best_gamma||'--'],
+      ['acc',  m.acc  ||'--'],
+      ['loss', m.loss ||'--'],
+      ['top5', m.top5 ||'--'],
     ];
   }
   function compareCard(node,label,weight){

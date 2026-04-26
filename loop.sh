@@ -307,7 +307,7 @@ CRITICAL ORDERING (write skeleton FIRST so timeout doesn't lose all work):
 7. Append a new "### Iteration $ITER_PAD" subsection to CLAUDE.md's "Documented findings" with a 1-paragraph lesson.
 8. Exit (don't propose next experiment; the next loop tick handles that).
 
-HARD CONSTRAINTS from program.md §HARD CONSTRAINTS still apply. No git push. No touching the main project at ../Hysyn-ZSL-v3.
+HARD CONSTRAINTS from program.md §HARD CONSTRAINTS still apply. No git push. Do not touch projects outside this repo's working tree.
 EOF
     # timeout wraps claude -p so a hung / runaway subagent (previously seen
     # taking 20+ min and blocking the entire while-true loop) gets SIGTERM'd
@@ -589,9 +589,9 @@ STEPS (in order):
 1. Read state/user_summaries.md and state/user_summary.md FIRST if they exist, then program.md completely, then CLAUDE.md, then all files in logs/iteration_*.md (may be none on first iter). Treat user summaries as the user's highest-priority steering notes unless they conflict with HARD CONSTRAINTS or binding consensus guidance.
 2. Review state/iterations.tsv for what's already been tried and their verdicts. IMPORTANT: rows with status="running" are currently training on other GPUs — treat them as "already taken" and do NOT duplicate their hypothesis. Pick something different.
 3. Look at the "Exploration frontier" in program.md and the "Documented findings" in CLAUDE.md. Pick ONE hypothesis to try. Prefer high-priority items that haven't been tested yet and aren't currently running. You may propose something new if well-justified.
-4. Create a new config at configs/ablation_shm/SUN_v2_iter${NEXT_PAD}_<short_name>_shm.yaml. Its output_root MUST be under runs_autoresearch/. Base it on SUN_v2_pure_plus_frobenius_light_shm.yaml unless your hypothesis requires otherwise. Change ONE thing (or a small coherent set of things belonging to one mechanism).
-5. If your change requires modifying code (src/hysyn_zsl/*.py or train.py), do it now. Make the change targeted, not sweeping.
-6. Launch via: bash run_experiment.sh configs/ablation_shm/SUN_v2_iter${NEXT_PAD}_<short_name>_shm.yaml $NEXT_ITER
+4. Create a new config at configs/ablation/iter${NEXT_PAD}_<short_name>.yaml. Its output_root MUST be under runs/. Base it on configs/cifar10_resnet34.yaml (or whatever your project's baseline config is) unless your hypothesis requires otherwise. Change ONE thing (or a small coherent set of things belonging to one mechanism).
+5. If your change requires modifying code (src/<your_pkg>/*.py or train.py), do it now. Make the change targeted, not sweeping.
+6. Launch via: bash run_experiment.sh configs/ablation/iter${NEXT_PAD}_<short_name>.yaml $NEXT_ITER
 7. After the launch script returns, STOP. Do NOT wait for training to finish. Do NOT analyze. Those happen in subsequent loop ticks.
 
 HARD CONSTRAINTS from program.md §HARD CONSTRAINTS still apply.

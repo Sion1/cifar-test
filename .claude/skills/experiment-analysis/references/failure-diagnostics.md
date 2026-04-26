@@ -1,136 +1,203 @@
-# Failure diagnostics cheat sheet
+# Failure diagnostics — image classification
 
-Quick lookup: given a failure mode (what's wrong), which visualization/metric confirms or denies it? Use this when analyzing results, to match what you see in the numbers/images to a named failure mode, and to know what additional evidence to collect.
+Common failure modes and what they look like in metrics + visualizations.
+Use this when the headline metric moved unexpectedly, before declaring
+**Bug** or **Failure**, and especially before iterating on the hypothesis.
 
-Cross-reference: the three canonical GZSL failure modes are defined in the `gzsl` skill's §"Three canonical failure modes". This file is the operational extension — how to detect them from experiment outputs.
-
-Remember: visualizations are supporting evidence, not causal proof. Use them in combination with quantitative metrics, not in place of them.
-
----
-
-## Seen-class bias
-
-**Symptom in numbers:**
-- S >> U (e.g., S=70, U=15, H=24.6)
-- Large gap between CZSL accuracy on unseen and GZSL U on unseen
-- γ sweep curve heavily right-skewed; optimal H requires γ far from 0
-
-**Confirmatory visualizations:**
-- **Confusion matrix (unseen block):** rows = unseen classes, cols = all classes. Seen-class columns show vertical stripes — unseen samples being dumped into specific seen classes.
-- **Prediction distribution histogram:** for each unseen test sample, which class was predicted? Histogram concentrated on seen-class ids = seen-bias.
-- **γ sweep curve:** H vs γ. Bias-dominated curves peak at large γ; well-calibrated methods peak near γ=0.
-
-**Refuting visualizations:**
-- Unseen predictions distributed roughly uniformly across classes (not concentrated on seen)
-- γ sweep peaks near 0
-
-**When the change should reduce bias, expect:**
-- S drops, U rises, H rises
-- Optimal γ shifts toward 0
-- Confusion matrix seen-column stripes diminish
+The CIFAR-10 + ResNet-34 demo references are concrete; the patterns
+generalize to any image-classification task.
 
 ---
 
-## Hubness
+## 1. Train-test leakage through augmentation
 
-**Symptom in numbers:**
-- Per-class U has extreme variance (some classes at 0%, some at 60%+)
-- Top-1 U much worse than top-5 U
-- Unseen predictions concentrated on a few **unseen** classes (different from seen-bias — concentration is within the unseen set)
+**Symptom.** Train accuracy and test accuracy track each other unusually
+closely (gap < 1 pp). Test accuracy at epoch 1 is already ~0.5 instead of
+~0.1 (random).
 
-**Confirmatory visualizations:**
-- **k-occurrence distribution:** for each class `c`, count N_k(c) = number of samples for which `c` is in the top-k nearest neighbors. Heavy right tail (a few classes with huge N_k) = hubness. Skewness > 5 is suggestive, > 10 is severe.
-- **Per-class U sorted bar chart:** right tail crashes to zero for many classes while top ~20% hold most of the accuracy → hubness.
-- **CSLS / normalized similarity comparison:** switching from raw cosine to CSLS (cross-domain local scaling) giving large U improvement → hubness.
+**Diagnosis.** Augmentation pipeline accidentally normalizes by per-batch
+statistics, OR the test set was included in the training data, OR
+`download=True` re-downloaded data into a wrong split.
 
-**Refuting visualizations:**
-- k-occurrence roughly uniform
-- Per-class U roughly flat, no extreme zeros
+**Verify.** Check `data.py`'s `build_transforms` — train and eval should
+use **different** Compose pipelines. The eval pipeline must NOT include
+random crop / flip / autoaugment. Re-run `evaluate(model, test_loader,
+...)` after loading the pretrained checkpoint and confirm it matches the
+report.
 
-**When the change should reduce hubness, expect:**
-- k-occurrence skewness drops
-- Per-class U variance drops
-- Gap between top-1 and top-5 U narrows
+**Fix.** Separate transforms; verify with `print(len(trainset),
+len(testset))` matches the dataset's published sizes.
 
 ---
 
-## Projection domain shift
+## 2. Overfitting (the textbook case)
 
-**Symptom in numbers:**
-- CZSL accuracy on unseen also low (not just GZSL — rules out pure calibration)
-- Unseen visual features project closer to wrong (seen) prototypes than to true semantic prototype
-- Large gap between train accuracy on seen and test accuracy on unseen even in CZSL
+**Symptom.** Train acc keeps climbing past 0.99; test acc plateaus or
+declines after some epoch.
 
-**Confirmatory visualizations:**
-- **Distance-to-prototype histograms:** for unseen test samples, plot two histograms — (a) distance from projected visual feature to TRUE semantic prototype, (b) distance to NEAREST seen prototype. If (b) < (a) for most samples → projection shift.
-- **t-SNE of projected visual features:** color by ground-truth class. Unseen clusters collapsed together or sprinkled inside seen clusters → projection not separating them.
-- **Train/test accuracy gap on seen:** if seen test accuracy also much lower than seen train, projection is noisy/overfit.
+**Diagnosis.** Capacity outsizes regularization. On CIFAR-10 with
+ResNet-34 + 60 epochs, this commonly fires when augmentation is `none` or
+weight decay is < 1e-4.
 
-**Refuting visualizations:**
-- Distance histograms: (a) < (b) for most samples
-- t-SNE: unseen classes form distinct, compact clusters
+**Verify.** Plot per-epoch `train_acc` vs `test_acc` from
+`runs/<exp>/history.json`. The "knee" where they diverge is the
+overfitting onset. If the knee appears in the first 10 epochs, the
+regularization is much too weak.
 
-**When the change should reduce projection shift, expect:**
-- Distance to true prototype shrinks relative to distance to nearest seen
-- t-SNE clusters for unseen become compact and separated
-- CZSL unseen accuracy rises (not just GZSL U)
+**Fix.** Strengthen augmentation (`standard → autoaugment`), increase
+weight decay, add dropout, or shorten training. Don't conclude the model
+"can't learn" without first ruling out overfitting.
 
 ---
 
-## Attention / spatial shortcut
+## 3. Optimization not converging
 
-Not one of the three canonical GZSL failure modes, but common in practice (and the motivation for HySyn-v3-style attention interventions).
+**Symptom.** `train_acc` plateaus at chance (0.1 for CIFAR-10) or
+oscillates wildly. `train_loss` flat or trending up.
 
-**Symptom in numbers:**
-- Per-class U unbalanced based on where the object sits in the image (low U on off-center classes)
-- High sensitivity to random/off-center crops
+**Diagnosis.** LR too high, gradient explosion, NaN in BatchNorm running
+stats, or a typo in the loss function.
 
-**Confirmatory visualizations:**
-- **Grad-CAM / attention maps:** high-weight pixels vs ground-truth bbox IoU. Average IoU < 0.2 is strong shortcut signal.
-- **Per-class attention heatmap average:** averaged across a class's samples, attention always in image center regardless of actual object position → center-prior shortcut.
+**Verify.** Print first-100-step loss values. If any is `nan` / `inf`, the
+training silently crashed forward. If loss starts at ~`-log(1/10) = 2.3`
+and stays flat, the model isn't learning at all.
 
-**Refuting visualizations:**
-- Attention consistently overlaps object across varied bbox positions
-- Per-class U not correlated with object position statistics
-
-**When the change should fix attention, expect:**
-- Grad-CAM center shifts toward bbox
-- Per-class U on off-center classes rises
-- Crop augmentation sensitivity drops
+**Fix.** Lower LR by 10×; check for `optim.step()` outside the gradient
+loop; check `torch.isnan` on intermediate activations.
 
 ---
 
-## When multiple failures co-exist
+## 4. Class imbalance treated as if balanced
 
-Most real experiments have 2+ modes interacting. Priority for analysis:
+**Symptom.** Headline accuracy looks fine but per-class accuracy is
+wildly uneven — some classes near 0%, others near 100%.
 
-1. **Seen-bias** usually dominates GZSL — check first (γ sweep is cheap).
-2. **Projection shift** next, especially on fine-grained datasets like CUB.
-3. **Hubness** tends to be severe in semantic-embedding methods, milder in visual or latent.
-4. **Shortcut learning** is dataset-specific — check when per-subset patterns look suspicious.
+**Diagnosis.** The dataset is imbalanced and the loss is unweighted.
+CIFAR-10 happens to be exactly balanced (5000/class), so this is more
+common in custom datasets — but the same pattern appears if a sampler bug
+causes one class to dominate batches.
 
-A single experiment typically addresses one mode. Mixed results often mean one mode improved while another worsened. Per-class + quadrant analysis pulls them apart.
+**Verify.** Report per-class accuracy from the test set. Compute
+`np.bincount(y_train)` to confirm the train distribution.
+
+**Fix.** Class-weighted CE, oversample rare classes, or focal loss.
 
 ---
 
-## Quick decision tree
+## 5. Augmentation breaks the label
 
-```
-Is S >> U (gap > 10 points)?
-├─ yes → seen-bias likely dominant; check γ sweep
-└─ no  → probably not pure bias
+**Symptom.** Test acc drops sharply after introducing a new augmentation,
+even one that "should" help. Grad-CAM looks scrambled or focuses on
+border pixels.
 
-Is U variance across unseen classes extreme (some 0%, some 60%+)?
-├─ yes → check hubness (k-occurrence distribution)
-└─ no  → probably not hubness
+**Diagnosis.** The augmentation broke label correctness. CIFAR-10
+examples: RandomCrop with too-large padding can crop the object out;
+AutoAugment shears can clip key features; cutout placed at the center
+destroys the class-defining region.
 
-Is CZSL unseen accuracy also low?
-├─ yes → projection shift (not just bias); check distance histograms
-└─ no  → issue likely at the seen/unseen boundary, not in the projection
+**Verify.** Save 16 augmented training samples to a grid PNG; eyeball
+whether each is still recognizably its labeled class.
 
-Is per-class U correlated with a spatial / visual property?
-├─ yes → shortcut learning; check attention maps
-└─ no  → probably not a shortcut issue
-```
+**Fix.** Tone down the augmentation strength or restrict to
+label-preserving transforms.
 
-Use this tree to narrow where to spend time, not as a replacement for looking at the data directly.
+---
+
+## 6. Frozen-layer mistakes
+
+**Symptom.** Train acc plateaus at a level too high for chance but too
+low for "learning is working" (e.g. 0.4 on CIFAR-10). LR sweeps don't
+move it.
+
+**Diagnosis.** Some module's `requires_grad` got set to `False`
+accidentally, e.g. when loading pretrained weights for transfer learning.
+
+**Verify.** `print(sum(p.numel() for p in model.parameters() if
+p.requires_grad))` — if this is much smaller than total params, you're
+training a head-only linear probe by accident.
+
+**Fix.** Re-enable grads; or if intentional, lower expectations
+accordingly.
+
+---
+
+## 7. BatchNorm running-stats poisoning
+
+**Symptom.** Single-image inference accuracy is much worse than batched
+inference accuracy on the same data.
+
+**Diagnosis.** BatchNorm's running mean/var got corrupted, or the model
+wasn't put in `model.eval()` for inference.
+
+**Verify.** Re-run evaluation explicitly with `model.eval()` and compare
+to `model.train()` mode (the latter uses batch statistics).
+
+**Fix.** Always `model.eval()` for inference; if the issue is corrupted
+running stats, train one more epoch with the desired data distribution.
+
+---
+
+## 8. Spurious correlation / shortcut learning
+
+**Symptom.** High accuracy but Grad-CAM consistently shows attention on
+backgrounds or non-object regions. Per-class accuracy gap is wide between
+classes whose backgrounds correlate with the label vs. those that don't.
+
+**Diagnosis.** The model learned a shortcut (e.g. "ship images have water
+backgrounds → predict ship from blue pixels"). On CIFAR-10 this is rarer
+than on ImageNet but does occur for `ship` (water) and `airplane` (sky).
+
+**Verify.** Run Grad-CAM on a balanced sample (8+ images per class).
+Manually inspect whether attention sits on the object or the surroundings.
+
+**Fix.** Background augmentation (random color jitter on background
+pixels), mixup-style augmentations that decouple object from context, or
+rebalance training data.
+
+---
+
+## 9. Optimizer / scheduler misconfiguration
+
+**Symptom.** AdamW with lr=0.1 on a fresh model → diverges. SGD with
+lr=0.001 → trains 10× too slow. Cosine scheduler with `T_max=epochs` but
+training ran 2× the epochs → second half of training has lr ≈ 0.
+
+**Diagnosis.** LR magnitude doesn't match optimizer family; or scheduler
+horizon doesn't match actual training length.
+
+**Verify.** Log `optimizer.param_groups[0]["lr"]` per epoch; plot it.
+
+**Fix.** Standard ranges: SGD 0.01–0.2, AdamW 1e-4–5e-4 for ResNet-scale
+models. Always set `T_max = epochs` for cosine.
+
+---
+
+## 10. Eval transform mismatch
+
+**Symptom.** Saved checkpoint scores X% in training script's eval, but
+`test.py` (or the dashboard's checkpoint loader) shows X−5%.
+
+**Diagnosis.** Two evaluation paths apply different transforms —
+typically one normalizes and the other doesn't, or one ToTensor()s in
+float32 and the other keeps uint8.
+
+**Verify.** Print the eval transform pipeline from both scripts side by
+side. The CIFAR_MEAN / CIFAR_STD numbers must match exactly.
+
+**Fix.** Centralize the transform definition in one module (`data.py`),
+import it from both training and eval entry points.
+
+---
+
+## When to call **Bug** vs **Failure**
+
+- **Bug** when one of the patterns above is the likely cause and the
+  change itself wasn't supposed to break a sanity baseline. Fix the bug
+  first; the verdict on the hypothesis comes after.
+- **Failure** when the implementation is sound but the hypothesis didn't
+  pan out — i.e. the predicted mechanism didn't fire and the metric moved
+  in the wrong direction.
+
+If you're not sure, default to **Bug** and investigate. A wrongly-labeled
+**Bug** wastes one debug session; a wrongly-labeled **Failure** can
+poison several follow-up iterations of the loop with bad lessons.

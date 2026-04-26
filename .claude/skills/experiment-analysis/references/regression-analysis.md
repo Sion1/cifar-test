@@ -1,201 +1,152 @@
-# Regression case analysis — deep dive
+# Regression-case analysis — the four-quadrant recipe
 
-When accuracy drops, don't panic. Don't scrap the change. Do this protocol carefully.
+Aggregate metrics hide *which* samples improved and *which* got worse. The
+four-quadrant analysis shows you the structure: of the samples the new
+run got wrong, were any of them right in the baseline? Of the samples the
+new run got right, were any of them already right in the baseline (so the
+"win" is double-counted)?
 
-## Why this matters
+This recipe assumes single-label classification (CIFAR-10 demo style).
+Adapt the prediction-correctness check for other tasks.
 
-The main SKILL says: "a drop in accuracy is not automatically a failure." This file is the how. You need to go from aggregate drop → concrete case-level evidence → informed verdict.
+## Inputs needed
 
-## Precondition — you need per-sample predictions
-
-This analysis requires per-sample predictions from both baseline and new runs. **Do not approximate it from per-class numbers** — the point is to see individual cases that changed direction, and per-class aggregates destroy that signal.
-
-If the user only has summary metrics, stop here and give them the dump command:
+For each test sample, both runs' predictions:
 
 ```python
-# Run this at the end of eval for both baseline and new checkpoints
 import torch
-
-dump = {
-    'y_true': y_true.cpu(),              # (N,) int64 ground truth class ids
-    'y_pred': y_pred.cpu(),              # (N,) int64 predicted class ids
-    'logits': logits.cpu(),              # (N, C) float, optional but useful
-    'paths':  image_paths,               # list of N strings, needed to pull images for Step 3b
-    'class_names': class_names,          # list of C strings
+saved = {
+    "y_true": y_test,            # (N,)  ground-truth labels
+    "y_base": baseline_preds,    # (N,)  argmax predictions of baseline
+    "y_new":  new_preds,         # (N,)  argmax predictions of new run
+    "paths":  test_image_paths,  # (N,)  identifiers, for spot-checking
 }
-torch.save(dump, f'preds_{run_name}.pt')
+torch.save(saved, "preds.pt")
 ```
 
-Then they can resume with `preds_baseline.pt` and `preds_new.pt`.
+If you don't have these saved, dump them once with a small modification
+to `test.py` (or with this snippet inside the eval loop):
 
-In the meantime, offer a **per-class regression sketch** as the interim step (count how many classes improved vs regressed, and how much per-class U variance changed) — but explicitly note this is not a substitute for quadrant analysis, it's a stopgap.
+```python
+all_preds, all_paths = [], []
+for x, y, paths in test_loader:           # paths optional
+    logits = model(x.to(device))
+    all_preds.append(logits.argmax(1).cpu())
+    all_paths.extend(paths)
+preds = torch.cat(all_preds)
+torch.save({"y_true": ..., "y_pred": preds, "paths": all_paths},
+           f"runs/<exp>/preds.pt")
+```
 
-## The quadrant framing
+## The four quadrants
 
-Partition the test set into four buckets:
+For each test sample, compute:
 
-|  | baseline correct | baseline wrong |
-|---|---|---|
-| **new correct** | ① stable correct | ② improvements |
-| **new wrong** | ③ regressions | ④ stable wrong |
+```
+correct_base = (y_base == y_true)
+correct_new  = (y_new  == y_true)
+```
 
-Counts: `|①| + |②| + |③| + |④| = N_test`
+This gives four buckets:
 
-- Net accuracy change = `(|②| − |③|) / N_test`
-- But this number doesn't tell you WHY.
-- The story is in ② (what the change fixes) and ③ (what the change breaks).
+| Bucket | base | new | Meaning |
+|---|---|---|---|
+| **TT** | ✓ | ✓ | Both right — neutral; not informative for verdict |
+| **TF** | ✓ | ✗ | **Regression** — the change broke previously-correct predictions |
+| **FT** | ✗ | ✓ | **Improvement** — the change fixed previously-wrong predictions |
+| **FF** | ✗ | ✗ | Both wrong — also not informative for verdict |
 
-## Building the quadrants
+The headline accuracy delta is `|FT| - |TF|` divided by N. But that net
+number erases the structure of the change.
+
+## What to compute
+
+Print the four counts:
+
+```python
+TT = ((y_base == y_true) & (y_new == y_true)).sum().item()
+TF = ((y_base == y_true) & (y_new != y_true)).sum().item()
+FT = ((y_base != y_true) & (y_new == y_true)).sum().item()
+FF = ((y_base != y_true) & (y_new != y_true)).sum().item()
+print(f"TT={TT} (both right) | TF={TF} (regression) | "
+      f"FT={FT} (improvement) | FF={FF} (both wrong)")
+print(f"Net Δ accuracy = ({FT} - {TF}) / {TT+TF+FT+FF} "
+      f"= {(FT-TF)/(TT+TF+FT+FF):+.4f}")
+```
+
+## Reading the buckets
+
+**Healthy improvement.** FT >> TF, with the FT samples concentrated in
+classes the hypothesis predicted (e.g. for a "fix overfitting"
+hypothesis, hard classes like cat/dog should dominate FT). TF should be
+scattered, not concentrated in any one class.
+
+**Confounded gain.** FT and TF both large (e.g. FT=300, TF=200, net +1
+pp). The change is a *re-shuffle* — it's gaining on some samples by
+losing others. Net positive but the mechanism may not be what you think;
+the hypothesis likely needs sharpening.
+
+**Trade-off.** FT large in predicted-improvement classes, TF large but
+concentrated in a different class. This is often the right outcome for a
+targeted fix — you traded easy-class accuracy for hard-class accuracy.
+Whether it's a Success or Partial depends on whether that trade was the
+intended outcome.
+
+**Hidden regression.** FT and TF are similar in size (a few samples each)
+but TF is concentrated in classes you care about. Net acc looks neutral
+but the change has hurt the high-priority subset.
+
+## Per-class breakdown of TF / FT
+
+Beyond raw counts, ask which classes the regressions came from:
 
 ```python
 import numpy as np
-import torch
+y_true_np = y_true.numpy()
+tf_mask = (y_base == y_true) & (y_new != y_true)
+ft_mask = (y_base != y_true) & (y_new == y_true)
 
-base = torch.load('preds_baseline.pt')
-new  = torch.load('preds_new.pt')
-
-y_true = base['y_true'].numpy()
-y_base = base['y_pred'].numpy()
-y_new  = new['y_pred'].numpy()
-
-def quadrant(y_true, y_b, y_n):
-    bc = (y_b == y_true)
-    nc = (y_n == y_true)
-    return (
-         bc &  nc,    # q1 stable correct
-        ~bc &  nc,    # q2 improvements
-         bc & ~nc,    # q3 regressions ← focus here
-        ~bc & ~nc,    # q4 stable wrong
-    )
-
-q1, q2, q3, q4 = quadrant(y_true, y_base, y_new)
-print(f"stable correct: {q1.sum()}")
-print(f"improvements:   {q2.sum()}")
-print(f"regressions:    {q3.sum()}")
-print(f"stable wrong:   {q4.sum()}")
-net = q2.sum() - q3.sum()
-print(f"net change: {net:+d} ({net / len(y_true) * 100:+.2f}%)")
+print("Regressions per class:")
+for c in range(num_classes):
+    print(f"  class {c} ({CLASSES[c]:>10}): "
+          f"TF={tf_mask[y_true_np == c].sum()}  "
+          f"FT={ft_mask[y_true_np == c].sum()}")
 ```
 
-## Sampling strategy
+The expected pattern from the hypothesis (Step 0) should match the
+actual pattern of FT — otherwise the change worked, but for different
+reasons than predicted.
 
-Sample 10–20 from ③ (or all of them if the pool is smaller than 20). Don't inspect all of ③ when it has hundreds — you'll drown.
+## Spot-checking individual cases
 
-**Stratified by class.** If regressions spread across many classes, 2–3 per class. If they cluster in a few, sample more from those.
+Pick 4–8 samples from TF (the regressions) and run Grad-CAM on both the
+baseline and new model. Look for:
 
-```python
-import pandas as pd
+- Did the attention shift to a different region? Where?
+- Did the shifted region include a non-class-distinctive feature (e.g.
+  shifted from cat's face to cat's tail when distinguishing cat vs dog)?
+- Is the regressed sample's true class hard for the new model in
+  general, or is this an isolated instance?
 
-df = pd.DataFrame({
-    'idx':        np.where(q3)[0],
-    'true_class': y_true[q3],
-    'base_pred':  y_base[q3],
-    'new_pred':   y_new[q3],
-})
-print(df.groupby('true_class').size().sort_values(ascending=False).head(20))
-```
+Pick another 4–8 from FT (the improvements). The ideal: the new
+attention sits on the class-defining region in a way the baseline's
+didn't.
 
-**Stratified by confidence change.** If you have logits, cases where the new model is confidently wrong (and baseline was right) are most informative — something specific shifted the decision.
+## When this analysis matters most
 
-```python
-# Assuming logits available
-base_logits = base['logits'].numpy()
-new_logits  = new['logits'].numpy()
+- The headline accuracy delta is small (|Δ| < 1 pp) and you're trying to
+  decide if it's signal or noise.
+- The hypothesis predicted a *structured* improvement (specific classes
+  / specific failure modes) — quadrant analysis tells you whether the
+  prediction was right.
+- You're considering propagating the change to downstream cells of the
+  ablation matrix and want to be sure it isn't a re-shuffle.
 
-new_conf_on_wrong = new_logits[q3].max(axis=1)
-base_conf_on_true = base_logits[q3, y_true[q3]]
+## When to skip
 
-# High-confidence regressions
-high_conf_reg = (new_conf_on_wrong > np.percentile(new_conf_on_wrong, 75)) & \
-                (base_conf_on_true > np.percentile(base_conf_on_true, 50))
-```
-
-## Per-case analysis template
-
-For each sampled regression case, fill this in:
-
-```
-Case #__  (sample_idx=____, path=____)
-
-Ground truth:      <class name>
-Baseline pred:     <class>    (correct / close miss / far miss)
-New pred:          <class>    (close miss / far miss / apparently random)
-
-Image (one sentence):  <what's in it, what's hard>
-
-Baseline attention:   <where was it looking?>
-New attention:        <where is it looking?>
-
-Hypothesized cause:
-  (a) intended tradeoff  — change shifted focus and this case paid the cost
-  (b) unrelated side-effect — change broke something it shouldn't
-  (c) noise / seed      — no clear mechanism
-  (d) test-set edge     — baseline got lucky; the case is inherently ambiguous
-
-Confidence in classification: high / medium / low
-```
-
-## Grouping into causes
-
-After 10–20 cases (or whatever fewer cases you had), group:
-
-| Cause | Count | Example cases |
-|---|---|---|
-| (a) intended tradeoff | __ | #3, #7, #11, ... |
-| (b) unrelated side-effect | __ | #2, #5, ... |
-| (c) noise | __ | #9, ... |
-| (d) test-set edge | __ | #14, ... |
-
-**Interpretation rules:**
-
-- **(a) dominant (≥60% of inspected regressions):** change works as designed. Regressions are the expected cost. Next iteration should add back what the change removed (e.g., global context). **This is the Partial Success verdict — document as such, don't downgrade to Failure.**
-- **(b) dominant:** change has an unintended side-effect. Isolate it next iteration.
-- **(c) dominant:** variance. Run more seeds.
-- **(d) dominant:** test-set quirks, not a problem with the change per se.
-- **No dominant cause:** change is doing several things at once. Simplify and re-test.
-
-## Don't skip improvements (②)
-
-It's tempting to only dissect ③. But the improvements tell you whether the mechanism is firing as expected.
-
-For each sampled improvement case:
-
-- Was baseline failing here for the reason you hypothesized?
-- Is new succeeding via the intended mechanism, or by luck?
-
-If improvements are uniformly distributed across target-class AND non-target-class cases, the mechanism isn't the reason for the gain — something else is. **This matters**: a gain that's not explained by the intended mechanism is fragile and doesn't validate the hypothesis.
-
-## Writing it up
-
-Keep the regression analysis section concrete:
-
-```
-## Regression case analysis
-
-Quadrants (CUB GZSL test set, seed 0):
-  stable correct:  1,842 (61.4%)
-  improvements:       89 ( 3.0%)
-  regressions:       147 ( 4.9%)
-  stable wrong:      923 (30.8%)
-  net change: −58 samples (−1.9%)
-
-Sampled 20 regression cases, stratified by class.
-- 13 / 20 show attention shifted from background grass patch (which baseline
-  used as a shortcut for ground-nesting birds) to the bird itself, but the
-  bird features are not yet well-learned for these classes.
-- 4 / 20 involve partial occlusion; the new model loses global context while
-  baseline used scene context to recover.
-- 3 / 20 show no clear pattern; likely noise.
-
-Interpretation: 17/20 regressions are (a) intended-tradeoff cases. The change
-is working as designed. Next iteration: either extend training so local
-features mature, or re-introduce global context via a dual-stream design.
-```
-
-## Common mistakes
-
-- **Sorting by per-class accuracy drop and looking only at top-3 classes.** Misses patterns distributed across many classes.
-- **Looking at regressions without improvements.** You must compare against improvement cases. The story lives in both.
-- **Claiming "it's a tradeoff" without evidence.** Tradeoffs are real but need per-case evidence, not hand-waving.
-- **Not grouping by cause.** 15 scattered reasons is a list, not analysis. Group into 3–5 causes.
-- **Over-interpreting small quadrant counts.** If |③| = 12 on a 3000-sample test set, inspecting 5 of them is closer to reading tea leaves than analysis. More seeds are more informative than more case-picking.
+- Headline gain is huge (>5 pp) AND clearly localized to expected
+  classes.
+- You're at the smoketest / sanity stage — no need for fine-grained
+  attribution yet.
+- You don't have sample-level predictions and the cost of producing them
+  exceeds the value of the analysis.

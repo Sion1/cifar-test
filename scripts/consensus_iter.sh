@@ -123,13 +123,13 @@ its verdict (§6) and especially its proposed NEXT step (§8).
 Read these files first:
 1. ${PRIMARY} — main's full analysis (verdict in §6, next-step in §8)
 2. program.md — research rules + Success/Partial/Failure criteria
-3. CLAUDE.md — current best, prior findings, CZSL ranking
+3. CLAUDE.md — current best, prior findings, the running ablation matrix
 4. state/iterations.tsv — overall loop state
 
 Then verify the main's claims by spot-checking:
-- Load metrics: runs_autoresearch/${EXP_NAME}/<subdir>/final.pth — does main's H/U/S/CZSL match?
-- Read figs/iter_${ITER_PAD}/per_class.csv if present — do mean ΔU + per-class signals match main's claims?
-- Read figs/iter_${ITER_PAD}/sweep_gamma_v2.json if present — does AUSUC + peak γ match?
+- Load metrics: runs/${EXP_NAME}/final.pth — does the primary report's headline metric match the checkpoint's `metrics` dict?
+- Read figs/iter_${ITER_PAD}/per_class.csv if present — do per-class signals match the report's claims?
+- Read any other artifacts the project emits (e.g. figs/iter_${ITER_PAD}/*.json, figs/iter_${ITER_PAD}/*.png) and confirm they are consistent with the verdict.
 
 ## OUTPUT — write to ${OUT} using THIS EXACT format
 

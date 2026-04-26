@@ -3,7 +3,7 @@
 import pathlib, math
 from PIL import Image, ImageDraw, ImageFont
 
-OUT = pathlib.Path("/radish/xl/zsl_project/Hysyn-ZSL-v3-SUN-autoresearch/figs/autoresearch_general_by_claude")
+OUT = pathlib.Path(__file__).resolve().parent
 OUT.mkdir(parents=True, exist_ok=True)
 
 def load_font(size):

@@ -36,8 +36,9 @@ short citation keys like `[A §3.1]` below.
 ## Foundational definitions — get these right first
 
 (Two or three definitions where conflating terms is a common failure mode.
-For ZSL example: the difference between ZSL and GZSL is in this section
-because mixing them up is the #1 source of unsound experiments. For your
+For example, an image-classification skill might lead with the difference
+between **test-set accuracy** and **validation accuracy used for early
+stopping** — conflating them silently inflates reported numbers. For your
 field, identify the analogous distinctions.)
 
 - **{Term A}**: {definition + why people get it wrong}
