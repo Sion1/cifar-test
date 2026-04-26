@@ -124,7 +124,35 @@ if [ "$NONINT" = 1 ]; then
         exit 3
     fi
     TORCH_VER=$("$NI_PYTHON" -c 'import torch; print(torch.__version__)')
-    CUDA_OK=$("$NI_PYTHON" -c 'import torch; print(torch.cuda.is_available())')
+    # Suppress noisy CUDA-init warnings on stderr — we only care whether
+    # cuda is usable (True/False). Warnings still surface in the loud
+    # warning block below if cuda_available=False.
+    CUDA_OK=$("$NI_PYTHON" -c 'import torch; print(torch.cuda.is_available())' 2>/dev/null)
+
+    # Hard warning: CUDA-unavailable is almost always a misconfigured env
+    # on a GPU host (e.g. torch built against newer CUDA than the host
+    # driver supports). Training will fall back to CPU, which on
+    # ResNet-34/CIFAR-10 is ~20x slower and on bigger models prohibitive.
+    if [ "$CUDA_OK" != "True" ]; then
+        echo "" >&2
+        echo "==============================================================" >&2
+        echo "  WARNING: torch.cuda.is_available() is FALSE on $NI_PYTHON" >&2
+        echo "" >&2
+        echo "  torch version: $TORCH_VER" >&2
+        echo "  Re-running with --python pointing at a CUDA-capable env is" >&2
+        echo "  strongly recommended. Common cause: this env's PyTorch was" >&2
+        echo "  built against a newer CUDA than the host driver supports." >&2
+        echo "" >&2
+        echo "  Diagnostic:" >&2
+        echo "    nvidia-smi | head -3                  # check driver version" >&2
+        echo "    $NI_PYTHON -c 'import torch; print(torch.version.cuda)'  # check torch's CUDA" >&2
+        echo "" >&2
+        echo "  Continuing setup anyway — training will run on CPU. Cancel" >&2
+        echo "  with Ctrl+C if this isn't what you want." >&2
+        echo "==============================================================" >&2
+        echo "" >&2
+    fi
+
     mkdir -p "$NI_DATA_ROOT" || { echo "ERROR: cannot create $NI_DATA_ROOT" >&2; exit 4; }
 
     {
