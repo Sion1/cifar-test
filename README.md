@@ -254,17 +254,48 @@ later by either re-running the setup script or doing it manually.
 cd /path/to/agent-test            # ← REQUIRED. Without this, `git init` /
                                   #   `git remote add` will fail with
                                   #   "not a git repository".
+```
 
-# 1. init repo (skip if already a git repo — `ls -d .git` to check)
-git init -b main
+#### Case A — you started from a fresh `git clone` of this framework
 
-# 2. add your fork as the remote.
+This is the common case (you cloned `Sion1/agentic-research-assistant`
+to follow the demo, and now you want your own fork to host iter PRs).
+The `origin` remote already exists and points at the upstream framework.
+You have two choices:
+
+```bash
+# Option 1: REPLACE origin to point at your new repo (severs upstream link)
+git remote set-url origin https://github.com/<you>/<your-new-repo>.git
+
+# Option 2: KEEP upstream as `upstream`, point `origin` at your fork
+#           (recommended — lets you `git pull upstream main` for future updates)
+git remote rename origin upstream
+git remote add origin https://github.com/<you>/<your-new-repo>.git
+```
+
+Then push:
+
+```bash
+git push -u origin main
+```
+
+#### Case B — your repo isn't a git repo yet
+
+```bash
+# 1. init repo. `-b main` requires git ≥ 2.28; older git use the fallback.
+git init -b main 2>/dev/null || { git init && git symbolic-ref HEAD refs/heads/main; }
+
+# 2. add your remote.
 #    Pick ONE URL format — do NOT mix `git@` and `https://`:
 #      SSH:    git@github.com:<you>/<repo>.git        (needs SSH key configured)
 #      HTTPS:  https://github.com/<you>/<repo>.git    (needs `gh auth login` or token)
 git remote add origin https://github.com/<you>/<repo>.git
 git push -u origin main
+```
 
+#### After either case
+
+```bash
 # 3. flip the auto-push flag in state/.env (loop.sh sources this)
 echo "export AUTORES_GIT_AUTOPUSH=1" >> state/.env
 
