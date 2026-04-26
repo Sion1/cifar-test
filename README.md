@@ -246,14 +246,23 @@ What you get with a remote configured:
 ### Setup (one-time)
 
 If you skipped git/push during step 2's onboarding, you can enable it
-later by either re-running the setup script or doing it manually:
+later by either re-running the setup script or doing it manually.
+
+**Manual setup — all commands MUST run from the repo root**:
 
 ```bash
-# 1. init repo (if not already a git repo)
+cd /path/to/agent-test            # ← REQUIRED. Without this, `git init` /
+                                  #   `git remote add` will fail with
+                                  #   "not a git repository".
+
+# 1. init repo (skip if already a git repo — `ls -d .git` to check)
 git init -b main
 
-# 2. add your fork as the remote
-git remote add origin git@github.com:<you>/agentic-research-assistant-fork.git
+# 2. add your fork as the remote.
+#    Pick ONE URL format — do NOT mix `git@` and `https://`:
+#      SSH:    git@github.com:<you>/<repo>.git        (needs SSH key configured)
+#      HTTPS:  https://github.com/<you>/<repo>.git    (needs `gh auth login` or token)
+git remote add origin https://github.com/<you>/<repo>.git
 git push -u origin main
 
 # 3. flip the auto-push flag in state/.env (loop.sh sources this)
