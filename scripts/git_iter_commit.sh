@@ -69,8 +69,31 @@ CONFIG_DIFF=$(awk '/^## 3\. Changes made/{flag=1; next} /^## 4\./{flag=0} flag' 
 DECISION=$(awk '/^## 7\. Decision/{flag=1; next} /^## 8\./{flag=0} flag && NF{print; exit}' "$REPORT" \
     | head -c 200)
 
-# Save current branch so we can restore it
-PREV_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
+# PREV_BRANCH is HARDCODED to main, NOT inferred from HEAD.
+#
+# Why: HEAD drifts. If a prior iter's commit step pushed to autoresearch/iter-N
+# and never returned HEAD to main (push fail, kill -9, etc.), the next iter's
+# `git symbolic-ref --short HEAD` returns autoresearch/iter-N. Then the new
+# branch `autoresearch/iter-(N+1)` is created off iter-N (not main), AND when
+# we restore the working tree at the end, we restore to iter-N rather than to
+# main, leaving HEAD permanently drifted. Once that happens, every subsequent
+# iter compounds the drift, and `git push origin autoresearch/iter-(N+M)`
+# fails with "src refspec ... does not match any" because the local ref was
+# never created — the commit is orphaned.
+#
+# Bug history: 2026-04-26 16:40 in Hysyn-ZSL-v3-SUN-autoresearch — iter009
+# committed as f61e74a but no autoresearch/iter-009 ref existed; manual
+# `git update-ref` recovery + PR #9 needed.
+PREV_BRANCH="main"
+
+# Defensive realign: if HEAD drifted from a prior iter that didn't clean up,
+# move it back to main BEFORE doing anything else. Working-tree restoration
+# below relies on PREV_BRANCH being main.
+_CURRENT_HEAD=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+if [ -n "$_CURRENT_HEAD" ] && [ "$_CURRENT_HEAD" != "main" ]; then
+    log "WARNING: HEAD drifted to $_CURRENT_HEAD — realigning to main before commit"
+    git checkout main 2>&1 | tail -1 | sed "s/^/  /"
+fi
 
 # Create or switch to the per-iter branch (off main, not off whatever was checked out)
 git fetch origin "$PREV_BRANCH" 2>/dev/null || true
@@ -80,6 +103,18 @@ if git show-ref --verify --quiet "refs/heads/${BRANCH}"; then
 else
     log "creating new branch ${BRANCH} off main"
     git checkout -b "$BRANCH" main 2>&1 | tail -1 | sed "s/^/  /"
+fi
+
+# Verify the checkout actually succeeded — if HEAD is detached or sitting on
+# a different branch, an orphan commit will be made and the push will fail
+# with "src refspec ... does not match any". That bug burned iter009 in
+# Hysyn-ZSL-v3-SUN-autoresearch on 2026-04-26. Abort loudly instead of
+# silently producing an orphan.
+_HEAD_AFTER_CHECKOUT=$(git symbolic-ref --short HEAD 2>/dev/null || echo "<detached>")
+if [ "$_HEAD_AFTER_CHECKOUT" != "$BRANCH" ]; then
+    log "FATAL: checkout did not land on $BRANCH (HEAD=$_HEAD_AFTER_CHECKOUT) — aborting"
+    log "       refusing to commit on the wrong ref; investigate before retrying"
+    exit 5
 fi
 
 # Stage relevant files: config, report, viz, CLAUDE.md, state.tsv, scripts.

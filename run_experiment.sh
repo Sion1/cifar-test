@@ -17,6 +17,9 @@
 #   AUTORES_SKIP_GPUS                  ← comma-sep GPU indices to skip
 #   AUTORES_MIN_FREE_MB        24000   ← only consider GPUs with this much free
 #   AUTORES_PER_PROCESS_FOOTPRINT_MB   ← OOM preflight cap (in MB)
+#   AUTORES_LAUNCH_COOLDOWN_S  30      ← refuse if last launch was < N s ago (set 0 to disable)
+#   AUTORES_ALLOW_GPU_STACK    0       ← if 1, allow same-GPU stacking (escape hatch)
+#   AUTORES_ALLOW_DUPLICATE_ITER 0     ← if 1, allow reusing an existing iter num
 #   PYTHON                     python3 ← override interpreter
 set -u
 
@@ -34,19 +37,85 @@ ITER_PAD=$(printf '%03d' "$ITER_NUM")
 EXP_NAME=$(grep -E '^exp_name:' "$CONFIG" | head -1 | awk -F'"' '{print $2}')
 EXP_NAME="${EXP_NAME:-$(basename "${CONFIG%.*}")}"
 LOG="logs/exp_${ITER_PAD}_${EXP_NAME}.log"
+TSV=state/iterations.tsv
+
+# ------- Pre-flight: 3 mechanical guards (encoded so an agent can't ignore) --
+# Past failures these prevent (each rule has a doc comment naming the symptom):
+#   B. duplicate iter   — agent passes the same ITER_NUM twice and clobbers the
+#                         ledger; reaper sees "remote/unknown" PID forever
+#   A. same-GPU stack   — back-to-back launches see stale free-mem and pin to
+#                         the same card; OOM cascade
+#   C. cooldown         — even when GPUs differ, two launches within seconds
+#                         indicate the agent is auto-flooding without observing
+#                         the prior run start
+
+# ---- Guard B: duplicate iter num ---------------------------------------
+if [ "${AUTORES_ALLOW_DUPLICATE_ITER:-0}" != "1" ] && [ -f "$TSV" ]; then
+    if awk -F'\t' -v n="$ITER_NUM" 'NR>1 && $1==n {found=1} END{exit !found}' "$TSV"; then
+        echo "[run_experiment] iter $ITER_NUM already in $TSV — refusing to clobber." >&2
+        echo "                 pick a fresh iter num, or set AUTORES_ALLOW_DUPLICATE_ITER=1" >&2
+        echo "                 to override (this is almost never what you want)." >&2
+        exit 4
+    fi
+fi
+
+# ---- Guard C: launch cooldown ------------------------------------------
+COOLDOWN_S="${AUTORES_LAUNCH_COOLDOWN_S:-30}"
+if [ "$COOLDOWN_S" -gt 0 ] && [ -f "$TSV" ]; then
+    LAST_TS=$(awk -F'\t' 'NR>1 && $7 != "" {ts=$7} END{print ts}' "$TSV")
+    if [ -n "$LAST_TS" ]; then
+        LAST_EPOCH=$(date -d "$LAST_TS" '+%s' 2>/dev/null || echo 0)
+        NOW_EPOCH=$(date '+%s')
+        DELTA=$(( NOW_EPOCH - LAST_EPOCH ))
+        if [ "$DELTA" -lt "$COOLDOWN_S" ]; then
+            REMAIN=$(( COOLDOWN_S - DELTA ))
+            echo "[run_experiment] cooldown active — last launch ${DELTA}s ago, need ${COOLDOWN_S}s." >&2
+            echo "                 wait ${REMAIN}s before next launch (prevents same-GPU stacking" >&2
+            echo "                 from stale nvidia-smi readings); override AUTORES_LAUNCH_COOLDOWN_S=0" >&2
+            exit 5
+        fi
+    fi
+fi
 
 # ------- GPU selection --------------------------------------------------
 SKIP_GPUS="${AUTORES_SKIP_GPUS-}"
 MIN_FREE_MB="${AUTORES_MIN_FREE_MB:-24000}"
+
+# Build the set of GPUs already occupied by sibling train.py processes
+# launched from THIS repo (Guard A: same-GPU stack prevention). We grep for
+# `train.py --config <config>` plus a per-process CUDA_VISIBLE_DEVICES marker
+# stamped into /proc/<pid>/environ; this matches the children spawned by this
+# script regardless of the command-line line wrapping.
+BUSY_GPUS=""
+if [ "${AUTORES_ALLOW_GPU_STACK:-0}" != "1" ]; then
+    for _pid in $(pgrep -f "train\.py.*--config" 2>/dev/null); do
+        _envfile="/proc/$_pid/environ"
+        [ -r "$_envfile" ] || continue
+        _g=$(tr '\0' '\n' < "$_envfile" 2>/dev/null | awk -F= '$1=="CUDA_VISIBLE_DEVICES"{print $2; exit}')
+        [ -n "$_g" ] && BUSY_GPUS="$BUSY_GPUS,$_g"
+    done
+    BUSY_GPUS=$(echo "$BUSY_GPUS" | tr ',' '\n' | sort -u | grep -v '^$' | paste -sd, -)
+fi
+
+# Effective skip list = user skip ∪ busy. Empty BUSY_GPUS leaves SKIP_GPUS untouched.
+if [ -n "$BUSY_GPUS" ]; then
+    EFFECTIVE_SKIP="${SKIP_GPUS:+${SKIP_GPUS},}${BUSY_GPUS}"
+else
+    EFFECTIVE_SKIP="$SKIP_GPUS"
+fi
+
 GPU=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null \
     | sort -t',' -k2 -rn \
-    | awk -F', ' -v skip="$SKIP_GPUS" -v thresh="$MIN_FREE_MB" '
+    | awk -F', ' -v skip="$EFFECTIVE_SKIP" -v thresh="$MIN_FREE_MB" '
         BEGIN { n = split(skip, s, ","); for (i=1; i<=n; i++) if (s[i] != "") skipm[s[i]] = 1 }
         $2+0 >= thresh && !($1 in skipm) { print $1; exit }')
 if [ -z "$GPU" ]; then
-    # No GPU available — exit so loop tick doesn't write a "running" row that
-    # immediately fails. Loop will retry next tick when a GPU frees up.
-    echo "[run_experiment] no GPU with free mem >= ${MIN_FREE_MB} MB (skipped: ${SKIP_GPUS:-none})" >&2
+    echo "[run_experiment] no GPU available." >&2
+    echo "                 free-mem threshold: ${MIN_FREE_MB} MB" >&2
+    echo "                 skip list (user):   ${SKIP_GPUS:-none}" >&2
+    echo "                 skip list (busy):   ${BUSY_GPUS:-none}  ← already running train.py" >&2
+    echo "                 wait for one of the busy GPUs to free, or set" >&2
+    echo "                 AUTORES_ALLOW_GPU_STACK=1 to override (risk: OOM cascade)." >&2
     exit 3
 fi
 export CUDA_VISIBLE_DEVICES="$GPU"
