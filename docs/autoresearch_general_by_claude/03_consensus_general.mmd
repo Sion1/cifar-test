@@ -1,0 +1,48 @@
+---
+title: "Figure 3 — N-Cycle Multi-Agent Consensus (general · drawn by Claude)"
+---
+flowchart TD
+    C1[Cycle 1 (already done):<br/>primary author wrote analysis<br/>(verdict + next-step proposal)] --> C2
+
+    C2[Cycle 2 — peer review round 1<br/>K independent reviewer agents<br/>(possibly different model families<br/>for diversity)<br/>SEQUENTIAL execution]
+    C2 --> C2a[Each reviewer reads:<br/>primary analysis +<br/>raw experiment outputs +<br/>research rules]
+    C2a --> C2b[Each writes critique:<br/>AGREE / DISAGREE on verdict<br/>AGREE / DISAGREE / COUNTER<br/>on next-step]
+
+    C2b --> C3[Cycle 3 — primary revision]
+    C3 --> C3a[Primary author reads<br/>K reviewer critiques]
+    C3a --> C3b{any reviewer<br/>disagrees on next-step?}
+    C3b -- no --> C3c[HOLD<br/>(keep original next-step)]
+    C3b -- yes --> C3d{critique<br/>technically valid?}
+    C3d -- valid --> C3e[REVISE<br/>(rewrite next-step section)]
+    C3d -- not valid --> C3c
+    C3c --> C3f[Write revision note<br/>(HOLD or REVISE)]
+    C3e --> C3f
+
+    C3f --> C4[Cycle 4 — peer review round 2<br/>K reviewers re-judge<br/>the now-final next-step<br/>(short verdict only)]
+    C4 --> C4a[Each writes:<br/>AGREE or DISAGREE]
+
+    C4a --> C5[Cycle 5 — primary final call]
+    C5 --> C5a{round 2:<br/>all AGREE?}
+    C5a -- yes --> C5b[STATUS = CONSENSUS]
+    C5a -- no --> C5c["STATUS = OVERRIDE_BY_PRIMARY<br/>(per project policy:<br/>after N cycles without<br/>agreement, primary's call wins)<br/>Quality gate, NOT veto gate"]
+    C5b --> C5d[Write final-call note]
+    C5c --> C5d
+
+    C5d --> CFIN[Run aggregator script]
+    CFIN --> CFINa["Aggregator extracts NEXT_STEP<br/>via fallback chain:<br/>(1) primary's final-call section<br/>(2) primary's original next-step<br/>(3) placeholder 'NOT EXTRACTED'<br/>STATUS: CONSENSUS / OVERRIDE / PARSE_FAIL"]
+    CFINa --> CFINb[Write canonical consensus output<br/>(propose phase reads this)]
+    CFINb --> CSTATUS{STATUS field}
+    CSTATUS -- CONSENSUS --> COK[Propose-Gate releases<br/>HINT marked BINDING]
+    CSTATUS -- OVERRIDE_BY_PRIMARY --> COK2[Propose-Gate releases<br/>HINT marked STRONG<br/>(with dissent noted)]
+    CSTATUS -- PARSE_FAIL --> CERR[Propose-Gate BLOCKS<br/>(per aggregator's contract)<br/>requires user to fix output<br/>or disable consensus mode]
+    CSTATUS -- file not written --> CERR2[Propose-Gate BLOCKS<br/>indefinitely until file appears]
+
+    classDef warn fill:#fff4e6,stroke:#e67e22,stroke-width:2px,color:#000
+    classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#000
+    classDef cycle fill:#e1f5ff,stroke:#0277bd,color:#000
+    classDef err fill:#ffebee,stroke:#c62828,color:#000
+    classDef step fill:#e3f2fd,stroke:#1565c0,color:#000
+    class C2,C3,C4,C5 cycle
+    class C5c,COK2 warn
+    class COK ok
+    class CERR,CERR2 err

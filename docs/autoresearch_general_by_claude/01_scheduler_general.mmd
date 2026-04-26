@@ -1,0 +1,81 @@
+---
+title: "Figure 1 — Autonomous Research Loop · Scheduler State Machine (general · drawn by Claude)"
+---
+flowchart TD
+    Start([External cadence wrapper<br/>e.g. cron / tmux / systemd timer<br/>Cadence is set externally, NOT by the loop itself]) --> Tick[Driver tick begins]
+    Tick --> Src[Source per-tick env overrides<br/>(consensus / cross-check toggles, etc.)]
+
+    Src --> G1{Host identity tag set?}
+    G1 -- no --> X0[Refuse tick / exit 0<br/>(prevents silent multi-host races<br/>on shared filesystems)]
+    G1 -- yes --> G2{Per-host enable sentinel<br/>file exists?}
+    G2 -- no --> X0
+    G2 -- yes --> G3[Acquire single-tick lock<br/>(local filesystem, NOT shared FS)]
+    G3 -- busy --> X0
+    G3 -- got lock --> S0
+
+    S0[Step 0 · sanity checks<br/>LLM CLI present / rules file /<br/>state ledger exists]
+    S0 --> S1
+
+    S1[Step 1 · Reap finished experiments<br/>scan ledger for status=running rows]
+    S1 --> R1{local PID still alive?}
+    R1 -- yes --> Rkeep[keep status=running]
+    R1 -- no --> R2[Read experiment log tail<br/>force FS-cache flush via fstat<br/>(shared-FS metadata staleness fix)]
+    R2 --> R3{authoritative FINISH<br/>signal in log?}
+    R3 -- exit code 0 --> Rcomp[mark COMPLETED]
+    R3 -- exit code != 0 --> Rfail["WARN: mark FAILED<br/>=== DEAD-END STATE ===<br/>not auto-analyzed<br/>not auto-committed<br/>NOT counted in STOP heuristic<br/>requires manual intervention"]
+    R3 -- no signal --> R4{log mtime stale<br/>beyond heartbeat threshold?}
+    R4 -- yes --> Rcomp
+    R4 -- no --> Rkeep
+
+    Rkeep --> S2
+    Rcomp --> S2
+    Rfail --> S2
+
+    S2{Step 2 · any COMPLETED row<br/>awaiting analysis?}
+    S2 -- yes --> ANALYZE[[See Figure 2:<br/>Primary analysis<br/>+ async consensus dispatch]]
+    ANALYZE --> XA[exit 0<br/>(blocks proposals this tick<br/>so each new hypothesis<br/>builds on prior findings)]
+
+    S2 -- no --> S3{Step 3 · STOP heuristics}
+    S3 -- iteration budget reached --> XS[STOP / exit 0]
+    S3 -- recent failure rate too high --> XS
+    S3 -- target metric reached --> XS
+    S3 -- none hit --> S4
+
+    S4{Step 4 · concurrent-experiment<br/>cap reached?}
+    S4 -- yes --> XW[exit 0 / wait next tick]
+    S4 -- no --> GATE
+
+    GATE{Propose-Gate<br/>(optional, standalone block)}
+    GATE -- consensus mode disabled --> S5pre[pass through]
+    GATE -- consensus mode enabled --> GATE2[Find latest analyzed iter<br/>excluding bug-marked rows]
+    GATE2 --> GATE3{consensus output<br/>file present?}
+    GATE3 -- no --> XG[exit 0<br/>(consensus still running)]
+    GATE3 -- yes --> GATE4{consensus STATUS<br/>field valid?}
+    GATE4 -- PARSE_FAIL or absent --> XG2[exit 0<br/>(needs manual recovery —<br/>fix consensus output or<br/>disable consensus)]
+    GATE4 -- CONSENSUS / OVERRIDE --> S5pre
+
+    S5pre[Step 5 · resource pre-check<br/>e.g. select compute device<br/>with sufficient capacity]
+    S5pre -- no resource --> XN[exit 0]
+    S5pre -- resource available --> S5
+
+    S5[Step 5 · Proposal phase<br/>NOTE: pre-checked resource is HINT only<br/>experiment launcher re-selects<br/>at actual launch time]
+    S5 --> S5a{consensus enabled?}
+    S5a -- yes --> S5b[Build propose-context<br/>from consensus output<br/>(authority calibrated by STATUS:<br/>BINDING / STRONG / WEAK)]
+    S5a -- no --> S5c[free hypothesis pick<br/>from research frontier]
+    S5b --> S5d
+    S5c --> S5d
+
+    S5d[Bounded LLM call · PROPOSE<br/>reads: rules / working memory /<br/>full iter history / state ledger<br/>output: ONE new experiment spec]
+    S5d --> S5e[Materialize spec:<br/>write config artifact +<br/>optionally edit codebase +<br/>invoke experiment launcher]
+    S5e --> S5f[Launcher (separate process):<br/>own resource selection +<br/>capacity preflight +<br/>background process spawn +<br/>append ledger row status=running]
+    S5f --> XP[exit 0]
+
+    classDef warn fill:#fff4e6,stroke:#e67e22,stroke-width:2px,color:#000
+    classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#000
+    classDef step fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef gate fill:#f3e5f5,stroke:#7b1fa2,color:#000
+    class Rfail warn
+    class S5,S5b warn
+    class GATE4 gate
+    class S0,S1,S2,S3,S4,S5pre,S5d,S5e,S5f step
+    class GATE,GATE2,GATE3 gate

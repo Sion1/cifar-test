@@ -1,0 +1,119 @@
+---
+name: my-task-background
+description: |
+  Core domain knowledge for **{your research area}**. Use this skill whenever
+  the user mentions {key topics A, B, C}, works with {datasets / methods /
+  models from your area}, or asks about {phenomena / concepts native to your
+  field}. Trigger proactively whenever any of those keywords appear, even
+  loosely (e.g. user says "this is a recall problem" → confirm precision/
+  recall axes before proceeding).
+---
+
+# {Your area} — {one-line definition}
+
+> **This is a TEMPLATE.** Rename the directory and the file to remove the
+> `_template_` prefix and `.template` suffix once you've filled it in:
+> ```
+> .claude/skills/_template_task_background/SKILL.md.template
+>     →   .claude/skills/<your-task-name>/SKILL.md
+> ```
+> Claude Code only auto-loads files named exactly `SKILL.md` — the template
+> filename is what keeps this from accidentally activating.
+
+The agentic loop reloads this skill on every analyze and propose tick. Its
+purpose is to encode the **non-obvious domain knowledge** that distinguishes
+"someone who knows the field" from "someone who can read a paper". Anything
+the agent could derive from a single textbook does NOT need to be in here;
+the failure modes, the conventions, the things that trip up newcomers — those
+do.
+
+Canonical reference: cite the survey or textbook your subfield treats as
+authoritative; keep the PDF at `references/<author-year>-survey.pdf` and use
+short citation keys like `[A §3.1]` below.
+
+---
+
+## Foundational definitions — get these right first
+
+(Two or three definitions where conflating terms is a common failure mode.
+For ZSL example: the difference between ZSL and GZSL is in this section
+because mixing them up is the #1 source of unsound experiments. For your
+field, identify the analogous distinctions.)
+
+- **{Term A}**: {definition + why people get it wrong}
+- **{Term B}**: {definition + the test that distinguishes it from Term A}
+
+## Problem formulation (standard notation)
+
+(One paragraph + a small block of math. Establish the notation the rest of
+this skill — and your iteration logs — will use. Pick the notation from the
+canonical reference so your reports cross-reference cleanly.)
+
+```
+Notation:
+  X = ...
+  Y = ...
+  ...
+```
+
+## Standard splits / benchmarks / metrics
+
+(List the splits / datasets / metrics the field has standardized on. For
+each, note: which version you use, what it tests, and what failure mode it
+exposes. Skip versions are a common cause of irreproducible numbers.)
+
+| Benchmark | Version | What it tests | Common pitfall |
+|---|---|---|---|
+| {bench A} | {paper, year} | {capability} | {pitfall} |
+
+## Failure modes the field has named
+
+(The named failure modes — agents will try to diagnose into one of these.
+Without this list, the agent will reinvent the wheel and miss community
+vocabulary.)
+
+- **{Failure mode 1}** ({paper-name year}): {one-paragraph definition; how
+  to detect it; what the standard mitigation is.}
+- **{Failure mode 2}** ...
+
+## Methods taxonomy (skim-reading guide for the agent)
+
+(A grouped list of approaches in your field. The agent doesn't need to
+re-derive each method, but it should know the taxonomy so it can place a
+new paper into the right category in one read.)
+
+- **Family A** ({key paper}): {one-line summary of what they do.}
+- **Family B**: ...
+
+## Evaluation conventions specific to this field
+
+- {Convention 1, e.g. "report mean ± std over 5 seeds"}
+- {Convention 2, e.g. "always show per-class breakdown for long-tailed setups"}
+- {Convention 3, e.g. "compare against {required baseline} else reviewers
+  reject"}
+
+## Reading checklist for new papers in this area
+
+(When the agent encounters a new paper, what 5 questions to answer before
+trusting it? This is the cheapest place to encode review-style scrutiny.)
+
+1. {Question 1}
+2. {Question 2}
+3. ...
+
+## When NOT to apply this skill
+
+(The boundary. Without this section, the agent will over-trigger on loose
+keyword matches.)
+
+- Don't apply when {clearly off-topic case}.
+- Don't apply when {related-but-different-area case} — use {other skill}
+  instead.
+
+---
+
+## Skill maintenance
+
+This file is meant to evolve with your understanding. Whenever the agent's
+verdicts run into a recurring confusion, update this skill — that's
+cheaper than fighting the same misunderstanding every iteration.

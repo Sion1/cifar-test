@@ -1,0 +1,37 @@
+---
+title: "Figure 2 — Primary Analysis + Async Consensus Dispatch (general · drawn by Claude)"
+---
+flowchart TD
+    A0[Step 2 fired:<br/>first COMPLETED iter -> ITER] --> A1[Bounded LLM call · ANALYZE<br/>(timeout + max-turns guards)]
+
+    A1 --> A2[Analysis agent executes<br/>'skeleton-first' workflow:<br/>1. Read rules / working memory /<br/>   recent iter reports<br/>2. Load experiment results<br/>3. Write iter report SKELETON<br/>4. Update state ledger<br/>   (analyzed / score / verdict)<br/>5. Generate mandatory artifacts<br/>   (visualizations / tables)<br/>6. Refill skeleton with evidence<br/>7. Append findings to working memory]
+
+    A2 --> A3{report file exists?}
+    A3 -- no --> ABUG["WARN: defensive guard fires when:<br/>* clean exit but no report (silent fail)<br/>* timeout (signal kill)<br/>* any other failure mode<br/>Mark row: analyzed / NULL_SCORE / Bug<br/>SKIP commit + consensus<br/>(prevents per-tick token burn loop)"]
+    ABUG --> exit_bug[exit 0]
+
+    A3 -- yes --> A4[Invoke version-control<br/>commit helper for ITER]
+    A4 --> A4a[Switch to per-iter branch<br/>(off main / never merged automatically)]
+    A4a --> A4b[Stage iter artifacts:<br/>config + report + viz +<br/>state ledger + working memory]
+    A4b --> A4c[Build structured commit message<br/>(hypothesis / results / verdict)]
+    A4c --> A4d{auto-push toggle<br/>(default: enabled)}
+    A4d -- enabled --> A4e[Push branch + open PR<br/>for human review]
+    A4d -- disabled --> A4f[Local branch only<br/>(awaits manual push)]
+    A4e --> A4g
+    A4f --> A4g
+
+    A4g["WARN: critical RESTORE step<br/>after switching back to base branch,<br/>cherry-restore iter outputs into working tree:<br/>report / state ledger / working memory<br/>WHY: downstream async consensus reads them<br/>FROM working tree, not from per-iter branch.<br/>Skipping this -> consensus 'primary not found' -><br/>row sits as not-analyzed -> next tick re-analyzes -><br/>infinite analyze loop"]
+
+    A4g --> A5{consensus mode<br/>enabled?}
+    A5 -- no --> exit_main[exit 0]
+    A5 -- yes --> A6["Detached background spawn<br/>of consensus pipeline:<br/>'setsid + nohup + close inherited fd' pattern<br/>WHY close inherited fd:<br/>parent holds the per-tick lock fd;<br/>without explicit close, child inherits it<br/>and blocks ALL future ticks for the<br/>full consensus runtime"]
+    A6 --> A7[Driver exits IMMEDIATELY<br/>(does NOT wait on consensus)<br/>see Figure 3 for the async chain]
+    A7 --> exit_main
+
+    classDef warn fill:#fff4e6,stroke:#e67e22,stroke-width:2px,color:#000
+    classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#000
+    classDef step fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef decision fill:#fffde7,stroke:#f9a825,color:#000
+    class ABUG,A4d,A4g,A6 warn
+    class A1,A2,A4,A4a,A4b,A4c step
+    class A3,A5 decision

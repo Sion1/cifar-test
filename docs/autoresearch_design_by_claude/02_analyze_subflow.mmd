@@ -1,0 +1,35 @@
+---
+title: "Figure 2 — Analyze Step + Async Consensus Dispatch (drawn by Claude · 2026-04-26)"
+---
+flowchart TD
+    A0[Step 2 fired:<br/>first row with status=completed → ITER] --> A1[timeout 1800s<br/>claude -p ANALYZE iter NNN<br/>--max-turns 150]
+
+    A1 --> A2[Claude executes 7 mandatory steps:<br/>1. Read program.md / CLAUDE.md / **last 3** iter logs<br/>2. torch.load final.pth → metrics<br/>3. Write logs/iteration_NNN.md skeleton<br/>4. Update state.tsv: analyzed/best_h/verdict<br/>5. Generate figs/iter_NNN/ — 4 viz<br/>6. Refill §5 viz takeaways<br/>7. Append CLAUDE.md Documented findings]
+
+    A2 --> A3{logs/iteration_NNN.md<br/>exists?}
+    A3 -- no --> ABUG["WARN: defensive guard<br/>fires for rc=0 silent failure<br/>OR rc=124 timeout<br/>OR any other failure mode<br/>mark row: analyzed / -1 / **Bug**<br/>SKIP git_iter_commit + consensus<br/>prevents 80K-token-per-tick burn"]
+    ABUG --> AEXIT[exit 0]
+
+    A3 -- yes --> A4[bash scripts/git_iter_commit.sh ITER]
+    A4 --> A4a[git checkout -b autoresearch/iter-NNN]
+    A4a --> A4b[stage configs / logs / figs /<br/>state.tsv / CLAUDE.md / scripts]
+    A4b --> A4c[structured commit message<br/>Hypothesis / Results / Verdict]
+    A4c --> A4d{AUTORES_GIT_AUTOPUSH<br/>**default = 1** ie push by default<br/>note: top-of-file comment says<br/>'default no' — code/comment mismatch}
+    A4d -- =1 default --> A4e[git push -u origin<br/>autoresearch/iter-NNN<br/>+ try gh pr create]
+    A4d -- =0 --> A4f[local branch awaits user review]
+    A4e --> A4g
+    A4f --> A4g
+
+    A4g["WARN: critical restore step<br/>after 'git checkout PREV_BRANCH'<br/>run 'git checkout BRANCH -- file'<br/>to restore working-tree copies of:<br/>iteration_NNN.md / state.tsv /<br/>CLAUDE.md / figs/iter_NNN<br/>otherwise async consensus<br/>cannot find primary md →<br/>infinite analyze loop iter045 fix"]
+
+    A4g --> A5{AUTORES_CONSENSUS_<br/>ENABLED=1?}
+    A5 -- no --> AEXIT
+    A5 -- yes --> A6["setsid nohup<br/>scripts/consensus_iter.sh ITER<br/>**9>&- closes inherited flock fd**<br/>without it consensus blocks all<br/>subsequent ticks for ~13min<br/>iter47 25-min stall fix"]
+    A6 --> A7[loop.sh exits **immediately**<br/>does NOT wait R1/R3/R2/R5<br/>consensus runs independently<br/>see Figure 3]
+    A7 --> AEXIT
+
+    classDef warn fill:#fff4e6,stroke:#e67e22,stroke-width:2px,color:#000
+    classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#000
+    classDef step fill:#e3f2fd,stroke:#1565c0,color:#000
+    class ABUG,A4d,A4g,A6 warn
+    class A1,A2,A4,A4a,A4b,A4c step

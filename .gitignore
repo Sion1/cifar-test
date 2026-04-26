@@ -1,0 +1,50 @@
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# ---- Loop runtime state (per-host, may contain secrets) ----
+state/.consensus.env
+state/.crossval.env
+state/.loop.enabled.*
+state/.host_env.*
+state/.gpu_reservations/
+state/iterations.tsv          # research log; uncomment to publish
+state/user_summaries.md       # user notes; uncomment to publish
+
+# ---- Training outputs ----
+runs/
+runs_*/
+wandb/
+wandb_local/
+
+# ---- Driver / training / agent transcripts ----
+logs/driver.log
+logs/exp_*.log
+logs/_analyze_*.transcript.log
+logs/_smoketest.log
+logs/iteration_*.md           # research artifacts; uncomment to publish
+logs/iteration_*.consensus.*.md
+
+# ---- Cache & generated bundles ----
+figs/iter_*/_cache_*.pt
+figs/iter_*/                  # research figures; uncomment to publish
+figs/dashboard/
+docs/autoresearch_dashboard/
+
+# ---- Data ----
+data/
+/data/
+
+# ---- Editor / OS ----
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# ---- Misc ----
+*.log
+*.tmp

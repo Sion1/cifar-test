@@ -1,0 +1,44 @@
+---
+title: "Figure 3 — 5-Cycle Consensus Chain (async background ~13min · drawn by Claude · 2026-04-26)"
+---
+flowchart TD
+    C1[Cycle 1 done:<br/>main analyze wrote iteration_NNN.md] --> C2
+
+    C2[Cycle 2 — eval R1<br/>SEQUENTIAL across:<br/>claude / codex / gemini]
+    C2 --> C2a[each agent reads:<br/>primary md + final.pth<br/>+ per_class.csv + gamma_sweep.json]
+    C2a --> C2b[writes iteration_NNN.consensus.<br/>AGENT.r1.md<br/>verdict: AGREE / DISAGREE /<br/>COUNTER-PROPOSE]
+
+    C2b --> C3[Cycle 3 — main revise]
+    C3 --> C3a[main claude reads<br/>3 R1 critiques]
+    C3a --> C3b{0 DISAGREE?}
+    C3b -- yes --> C3c[HOLD — keep §8]
+    C3b -- no --> C3d{critique technically valid?}
+    C3d -- valid --> C3e[REVISE — overwrite primary §8]
+    C3d -- not valid --> C3c
+    C3c --> C3f[write main.r3.md]
+    C3e --> C3f
+
+    C3f --> C4[Cycle 4 — eval R2<br/>3 evals re-judge final §8]
+    C4 --> C4a[write AGENT.r2.md<br/>AGREE / DISAGREE]
+
+    C4a --> C5[Cycle 5 — main final]
+    C5 --> C5a{R2 all AGREE?}
+    C5a -- yes --> C5b[STATUS = CONSENSUS]
+    C5a -- no --> C5c[STATUS = OVERRIDE_BY_MAIN<br/>main's §8 still wins<br/>dissent recorded<br/>quality gate, not veto gate]
+    C5b --> C5d[write main.r5.md]
+    C5c --> C5d
+
+    C5d --> CFIN[python3 scripts/parse_consensus.py ITER]
+    CFIN --> CFINa[**3-layer fallback for NEXT_STEP:**<br/>1 R5 '## Final next-step' section<br/>2 primary §8<br/>3 placeholder NEXT_STEP NOT EXTRACTED]
+    CFINa --> CFINb[write logs/iteration_NNN.<br/>consensus.final.md]
+    CFINb --> CSTATUS{STATUS field}
+    CSTATUS -- CONSENSUS / OVERRIDE_BY_MAIN /<br/>**PARSE_FAIL** --> COK["file exists → Propose-Gate releases<br/>WARN: gate does NOT verify STATUS<br/>even corrupt final passes"]
+    CSTATUS -- file not written --> CERR[propose permanently blocked<br/>need manual stub OR<br/>AUTORES_CONSENSUS_ENABLED=0]
+
+    classDef warn fill:#fff4e6,stroke:#e67e22,stroke-width:2px,color:#000
+    classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#000
+    classDef cycle fill:#e1f5ff,stroke:#0277bd,color:#000
+    classDef err fill:#ffebee,stroke:#c62828,color:#000
+    class C2,C3,C4,C5 cycle
+    class C5c,COK warn
+    class CERR err

@@ -1,0 +1,61 @@
+---
+title: "Figure 4 — Experiment Execution Sub-Process (general · drawn by Claude)"
+---
+flowchart LR
+    Cfg[Experiment spec<br/>(declarative artifact:<br/>YAML / JSON / TOML)] --> Launcher[Experiment launcher<br/>(thin shell wrapper)]
+    Launcher --> Pre[Pre-flight checks:<br/>resource selection +<br/>capacity validation +<br/>output-path policy]
+    Pre --> Init[Pipeline init:<br/>seed / logging / metrics sink]
+    Init --> Data[Data layer<br/>(load, split, batch)]
+    Init --> Core[Core component A<br/>(always-on backbone)]
+    Init --> CoreB[Core component B<br/>(always-on head)]
+
+    Core --> Feat[Primary representation]
+    CoreB --> Repr[Representation refinement]
+
+    Feat --> ObjMain[Main objective term<br/>(always present)]
+    Repr -.-> ObjMain
+
+    Feat --> OptA{Optional module A<br/>(ablation switch)}
+    OptA -- on --> OptAOn[Module A active]
+    OptA -- off --> OptAOff[Module A skipped]
+    OptAOn --> ObjA[Auxiliary objective A]
+
+    OptAOn --> OptB{Optional module B<br/>(REQUIRES A)}
+    OptB -- on --> OptBOn[Module B active]
+    OptB -- off --> OptBOff[Module B skipped]
+    OptBOn --> ObjB[Auxiliary objective B]
+
+    OptAOn --> OptC{Optional module C<br/>(REQUIRES A)}
+    OptC -- on --> OptCOn[Module C active]
+    OptC -- off --> OptCOff[Module C skipped]
+    OptCOn --> ObjC[Auxiliary objective C]
+
+    Repr --> OptD{Optional module D<br/>(INDEPENDENT)}
+    OptD -- on --> OptDOn[Module D active]
+    OptD -- off --> OptDOff[Module D skipped]
+    OptDOn --> ObjD[Auxiliary objective D]
+
+    ObjMain --> Sum[Composite objective<br/>= weighted sum of active terms]
+    ObjA --> Sum
+    ObjB --> Sum
+    ObjC --> Sum
+    ObjD --> Sum
+
+    Sum --> Step[Optimization step]
+    Step --> Eval[Periodic evaluation<br/>(per-checkpoint metrics<br/>+ search-space sweeps)]
+    Eval --> Track[Best-tracker<br/>(maintains running optimum)]
+    Track --> Save[Persist checkpoints:<br/>best-by-metric +<br/>final state +<br/>metric snapshot]
+    Save --> Finish[Write FINISH-line to log<br/>(authoritative end signal<br/>read by reaper in Figure 1)]
+
+    classDef found fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000
+    classDef opt fill:#bbdefb,stroke:#1565c0,stroke-width:2px,color:#000
+    classDef optreq fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef ind fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#000
+    classDef obj fill:#ffe0b2,stroke:#e65100,color:#000
+    classDef step fill:#e3f2fd,stroke:#1565c0,color:#000
+    class Core,CoreB found
+    class OptA,OptAOn opt
+    class OptB,OptBOn,OptC,OptCOn optreq
+    class OptD,OptDOn ind
+    class ObjMain,ObjA,ObjB,ObjC,ObjD,Sum obj
+    class Cfg,Launcher,Pre,Init,Data,Step,Eval,Track,Save,Finish step

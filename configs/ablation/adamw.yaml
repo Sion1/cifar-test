@@ -1,0 +1,19 @@
+# Ablation: AdamW optimizer (cell C — optimizer change)
+exp_name: cifar10_iter002_adamw
+seed: 42
+
+data:
+  root: /data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+training:
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.05
+  scheduler: cosine
+  epochs: 60
+output: { root: runs }
