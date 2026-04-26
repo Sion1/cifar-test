@@ -94,17 +94,55 @@ export WANDB_PROJECT=agentic-research-cifar10-demo
 # or in YAML: wandb: { project: my-project, tags: [demo] }
 ```
 
-### 2. Run a single experiment manually
+### 2. First-launch onboarding (interactive, required once)
+
+On a fresh checkout, run the interactive setup:
 
 ```bash
-# train one config (downloads CIFAR-10 to /data/cifar10 on first run)
+bash scripts/first_launch_setup.sh
+```
+
+It asks four small questions (all **strongly recommended**, each declinable):
+
+1. Which Python (with torch + torchvision installed)?
+2. Where should datasets live? (default: `./data/`)
+3. Which GPUs to force-skip? (shows `nvidia-smi` so you can see)
+4. Enable wandb tracking + per-iter git commits / GitHub push?
+
+Choices are written to `state/.env` (sourced by `loop.sh` and
+`run_experiment.sh`) and the sentinel `state/.onboarding_done` is created
+— that unblocks the Step 0.5 gate in `loop.sh` so it can start ticking.
+The gate fires only on a fresh repo (no iter rows yet); existing
+checkouts with state are unaffected.
+
+You can re-run the script anytime to change your choices.
+
+### 3. Smoketest with a single epoch
+
+After onboarding, verify the pipeline end-to-end on a single epoch
+(~30 s, downloads CIFAR-10 if absent):
+
+```bash
+source state/.env                                              # picks up PYTHON / data root / GPU skip list
+EPOCHS_OVERRIDE=1 bash run_experiment.sh configs/cifar10_resnet34.yaml 0
+tail -f logs/exp_000_*.log
+```
+
+You should see `[ep 0/1]` then a `FINISH ... rc=0` line and a populated
+`runs/cifar10_baseline/`. If that works, the full 60-epoch run is the
+same command without `EPOCHS_OVERRIDE=1`.
+
+### 4. Run a single experiment manually
+
+```bash
+# train one config end-to-end (downloads CIFAR-10 if absent)
 bash run_experiment.sh configs/ablation/no_aug.yaml 1
 
 # tail the training log
 tail -f logs/exp_001_*.log
 ```
 
-### 3. Visualize after training
+### 5. Visualize after training
 
 ```bash
 CKPT=runs/cifar10_iter001_no_aug/best.pth
@@ -113,14 +151,14 @@ python3 scripts/visualize_tsne.py --ckpt $CKPT --out figs/iter_001/tsne.png
 python3 scripts/visualize_cam.py  --ckpt $CKPT --out figs/iter_001/cam.png
 ```
 
-### 4. Generate the interactive dashboard
+### 6. Generate the interactive dashboard
 
 ```bash
 bash scripts/generate_experiment_tree_web.sh
 # → docs/autoresearch_dashboard/index.html (open in any browser)
 ```
 
-### 5. Hand the wheel to the loop
+### 7. Hand the wheel to the loop
 
 > **Prerequisite:** at least `claude` (and ideally also `codex` /
 > `gemini`) installed and authenticated — see step 1. The loop *will not
@@ -152,7 +190,7 @@ The loop ticks every 5 min: reaps finished trainings, calls an LLM to analyze
 each one, runs a 5-cycle multi-agent consensus on the next-step, then proposes
 and launches the next experiment.
 
-### 6. Watch the loop in real time
+### 8. Watch the loop in real time
 
 While the loop runs, this shows a single-screen status board (wrapper
 status, sentinel/lock state, ledger summary, running iters, GPU load,

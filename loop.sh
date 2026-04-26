@@ -29,6 +29,14 @@ if [ -f state/.crossval.env ]; then
     . state/.crossval.env
     set +a
 fi
+# Onboarding choices (PYTHON, AUTORES_DATA_ROOT, AUTORES_SKIP_GPUS,
+# WANDB_PROJECT, AUTORES_GIT_AUTOPUSH) — written by scripts/first_launch_setup.sh.
+if [ -f state/.env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . state/.env
+    set +a
+fi
 
 # Host allowlist — the autoresearch directory lives on CIFS shared across
 # multiple hosts. If more than one host has a while-true driver ticking,
@@ -136,6 +144,28 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 test -f program.md || { log "ERROR: program.md missing"; exit 11; }
 test -f state/iterations.tsv || { log "ERROR: state/iterations.tsv missing"; exit 12; }
+
+# -------------------------------------------------
+# Step 0.5: first-launch onboarding gate
+#
+# Fires ONLY on a truly fresh repo: state/iterations.tsv has just the header
+# (no data rows) AND no state/.onboarding_done sentinel. In that case the loop
+# halts with clear instructions pointing the user at scripts/first_launch_setup.sh,
+# which interactively asks about Python env, data root, GPU skip-list, wandb,
+# and git/GitHub remote (all strongly recommended) and writes the sentinel
+# when finished.
+#
+# Once the sentinel exists OR any iteration row exists, this gate is a no-op
+# — already-running loops with state are completely unaffected.
+# -------------------------------------------------
+_HAS_ITER_ROW=$(awk -F'\t' 'NR>1 && $1 ~ /^[0-9]+$/ {c++} END{print c+0}' state/iterations.tsv)
+if [ ! -f state/.onboarding_done ] && [ "$_HAS_ITER_ROW" -eq 0 ]; then
+    log "first-launch detected — onboarding required before loop can tick"
+    log "  run interactively:  bash scripts/first_launch_setup.sh"
+    log "  it will ask about Python env / data root / GPU skip / wandb / git"
+    log "  (all strongly recommended; you may decline any individual one)"
+    exit 0
+fi
 
 # -------------------------------------------------
 # Step 1: reap — mark trainings as completed/failed when they actually end.

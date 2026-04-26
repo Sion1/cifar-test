@@ -5,7 +5,7 @@ exp_name: cifar10_baseline
 seed: 42
 
 data:
-  root: /data/cifar10
+  root: ./data/cifar10        # repo-relative default. Override with absolute path if you have a shared dataset cache.
   augmentation: standard      # none | standard | autoaugment
   batch_size: 128
   num_workers: 4

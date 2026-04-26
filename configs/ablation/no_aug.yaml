@@ -3,7 +3,7 @@ exp_name: cifar10_iter001_no_aug
 seed: 42
 
 data:
-  root: /data/cifar10
+  root: ./data/cifar10
   augmentation: none
   batch_size: 128
   num_workers: 4

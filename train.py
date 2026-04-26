@@ -64,7 +64,7 @@ def main():
 
     # ---- optim + sched ----
     train_cfg = cfg.get("training", {})
-    epochs = int(train_cfg.get("epochs", 20))
+    epochs = int(os.environ.get("EPOCHS_OVERRIDE", train_cfg.get("epochs", 20)))
     optimizer = build_optimizer(model, train_cfg)
     scheduler = build_scheduler(optimizer, train_cfg, epochs=epochs)
     criterion = nn.CrossEntropyLoss()
