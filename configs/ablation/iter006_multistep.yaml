@@ -1,0 +1,26 @@
+# Ablation: multistep LR schedule (Cell E — A3 axis swap from Cell B)
+# Single-axis delta from iter004_std.yaml: scheduler cosine → multistep,
+# milestones [30, 45] (= 50% / 75% of 60 ep), gamma=0.1 (hard-coded in trainer).
+# Everything else held at the Cell B recipe (standard aug, sgd 0.1 mom 0.9
+# nesterov wd 5e-4, 60 ep, seed=42).
+exp_name: cifar10_iter006_multistep
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: multistep
+  milestones: [30, 45]
+  epochs: 60
+output: { root: runs }
