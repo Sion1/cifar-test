@@ -59,6 +59,25 @@ Reference: cell A is the floor. Anything in cells B-F should beat this.
      you're correcting a mistake; the agent reads back its own past notes
      to build context for the next iteration. -->
 
+### Iteration 000 — pipeline-confirmation only (NOT a matrix cell)
+
+Iter 0 was launched with `EPOCHS_OVERRIDE=1` against the default
+`configs/cifar10_resnet34.yaml` (the canonical first-launch smoketest from
+`scripts/first_launch_setup.sh:401`). Outcome: test_acc=0.2911 after one
+epoch on CIFAR-10. **Verdict = Bug** — not because anything broke, but to
+keep this row out of `loop.sh:615`'s "best so far" calculation; a 1-epoch
+checkpoint is not a usable matrix baseline. Lessons worth carrying forward:
+(1) the training/checkpointing/reap pipeline is verified end-to-end on this
+host (CUDA OK on the `zsl_torch` env, `final.pth` saved with `metrics` and
+`history`, dataset loads from `./data` via `AUTORES_DATA_ROOT`); (2) per-class
+behavior at epoch 0 is dominated by a vehicle-vs-animal split with cat
+collapsing to 0% — interpret early-iter regressions in cat/bird/ship through
+this lens, not as bugs; (3) Grad-CAM at epoch 0 is uniformly center-biased,
+so any later iter that *retains* center-only attention after many epochs
+should be flagged as under-fit even if test_acc looks plausible. Cell A
+baseline (augmentation=none, 60 ep, seed=42) still owes its locked numbers
+to CLAUDE.md's "Baseline numbers" block — that's the next iter's job.
+
 ---
 
 ## Operating rules per iteration (framework-supplied; keep as-is)

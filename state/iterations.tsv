@@ -1,0 +1,2 @@
+iter	status	exp_name	config	gpu	pid	started_at	finished_at	best_metric	verdict
+0	analyzed	cifar10_baseline	configs/cifar10_resnet34.yaml	0	125205	2026-04-27T06:12:48+0000	2026-04-27 06:14:13	0.2911	Bug

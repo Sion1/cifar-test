@@ -15,13 +15,35 @@
 #
 # Env knobs:
 #   AUTORES_SKIP_GPUS                  ← comma-sep GPU indices to skip
-#   AUTORES_MIN_FREE_MB        24000   ← only consider GPUs with this much free
+#   AUTORES_MIN_FREE_MB         8000   ← only consider GPUs with this much free
+#                                       (sized for the CIFAR-10 ResNet-34 demo,
+#                                        which needs ~2-3 GB. Raise for larger
+#                                        models — e.g. 22000 for ViT-B-scale
+#                                        backbones, 24000+ for full ViT/L or
+#                                        any model > ~15 GB activations)
 #   AUTORES_PER_PROCESS_FOOTPRINT_MB   ← OOM preflight cap (in MB)
 #   AUTORES_LAUNCH_COOLDOWN_S  30      ← refuse if last launch was < N s ago (set 0 to disable)
 #   AUTORES_ALLOW_GPU_STACK    0       ← if 1, allow same-GPU stacking (escape hatch)
 #   AUTORES_ALLOW_DUPLICATE_ITER 0     ← if 1, allow reusing an existing iter num
+#   AUTORES_SMOKETEST          0       ← if 1, training is a smoketest:
+#                                          - EPOCHS_OVERRIDE auto-set to 1
+#                                          - row written to state/smoketests.tsv (NOT iterations.tsv),
+#                                            so reaper / analyze / dashboard ignore it
+#                                          - all guards (cooldown, dup, GPU-stack) still apply
+#                                       Equivalent: pass --smoketest as the first arg.
 #   PYTHON                     python3 ← override interpreter
 set -u
+
+# --smoketest sugar: translate to AUTORES_SMOKETEST=1 + EPOCHS_OVERRIDE=1.
+# Lets users write `bash run_experiment.sh --smoketest <yaml> 0` instead of
+# the longer env-var form.
+if [ "${1:-}" = "--smoketest" ]; then
+    AUTORES_SMOKETEST=1
+    export AUTORES_SMOKETEST
+    : "${EPOCHS_OVERRIDE:=1}"
+    export EPOCHS_OVERRIDE
+    shift
+fi
 
 CONFIG="${1:-}"
 ITER_NUM="${2:-0}"
@@ -34,10 +56,32 @@ cd "$(dirname "$0")"
 mkdir -p logs state runs
 
 ITER_PAD=$(printf '%03d' "$ITER_NUM")
-EXP_NAME=$(grep -E '^exp_name:' "$CONFIG" | head -1 | awk -F'"' '{print $2}')
+# Parse exp_name with a real YAML parser. The earlier `awk -F'"'` approach
+# only worked for quoted values like `exp_name: "foo"`; unquoted YAML
+# (the more common form) returned empty, silently falling back to the
+# config filename — leaving state/iterations.tsv listing one name while
+# train.py wrote runs/<other-name>/, breaking analyze + dashboard lookup.
+PYTHON_EARLY="${PYTHON:-python3}"
+EXP_NAME=$("$PYTHON_EARLY" - "$CONFIG" <<'PY' 2>/dev/null
+import sys, pathlib, yaml
+cfg = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
+print(cfg.get("exp_name") or pathlib.Path(sys.argv[1]).stem)
+PY
+)
 EXP_NAME="${EXP_NAME:-$(basename "${CONFIG%.*}")}"
 LOG="logs/exp_${ITER_PAD}_${EXP_NAME}.log"
-TSV=state/iterations.tsv
+
+# Smoketest mode → write to state/smoketests.tsv so reaper/analyze/dashboard
+# (which all read state/iterations.tsv) don't pick it up. The training itself
+# is identical, only the bookkeeping is sandboxed. Without this, a 1-epoch
+# smoketest gets analyzed by claude -p, burns ~5 min + tokens producing a
+# (predictable) 'noise' verdict, then misleads downstream propose decisions.
+if [ "${AUTORES_SMOKETEST:-0}" = "1" ]; then
+    TSV=state/smoketests.tsv
+    LOG="logs/smoketest_${EXP_NAME}.log"
+else
+    TSV=state/iterations.tsv
+fi
 
 # ------- Pre-flight: 3 mechanical guards (encoded so an agent can't ignore) --
 # Past failures these prevent (each rule has a doc comment naming the symptom):
@@ -79,7 +123,7 @@ fi
 
 # ------- GPU selection --------------------------------------------------
 SKIP_GPUS="${AUTORES_SKIP_GPUS-}"
-MIN_FREE_MB="${AUTORES_MIN_FREE_MB:-24000}"
+MIN_FREE_MB="${AUTORES_MIN_FREE_MB:-8000}"
 
 # Build the set of GPUs already occupied by sibling train.py processes
 # launched from THIS repo (Guard A: same-GPU stack prevention). We grep for
@@ -142,5 +186,10 @@ fi
 printf '%d\trunning\t%s\t%s\t%s\t%s\t%s\t\t\t\n' \
     "$ITER_NUM" "$EXP_NAME" "$CONFIG" "$GPU" "$PID" "$TS" >> "$TSV"
 
-echo "[run_experiment] iter $ITER_PAD launched pid=$PID gpu=$GPU log=$LOG"
+if [ "${AUTORES_SMOKETEST:-0}" = "1" ]; then
+    echo "[run_experiment] SMOKETEST iter $ITER_PAD launched pid=$PID gpu=$GPU log=$LOG"
+    echo "                 (recorded in $TSV; not analyzed by loop)"
+else
+    echo "[run_experiment] iter $ITER_PAD launched pid=$PID gpu=$GPU log=$LOG"
+fi
 exit 0
