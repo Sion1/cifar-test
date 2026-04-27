@@ -1,0 +1,30 @@
+# Ablation iter 004 — Cell B: standard augmentation (RandomCrop + HorizontalFlip)
+# Anchor of the A1 sweep alongside Cell A (iter003, bare) and Cell C (iter002, autoaug).
+# Single-axis delta vs. iter003_bare.yaml:
+#   data.augmentation: none -> standard
+# Everything else (sgd, lr=0.1, mom=0.9, nesterov, wd=5e-4, cosine, 60 ep, seed=42)
+# held fixed so the gain over A is attributable to A1 alone.
+# Note: iter000 ran the same config but with EPOCHS_OVERRIDE=1 (smoketest, noise).
+# This is the real Cell B at full schedule.
+exp_name: cifar10_iter004_std
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+
+output: { root: runs }
