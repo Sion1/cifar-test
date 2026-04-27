@@ -1,0 +1,30 @@
+# Cell E — multistep schedule (single-axis delta vs Cell B / iter003).
+# Only A3 changes: scheduler cosine -> multistep with milestones=[30,45], gamma=0.1.
+# All other knobs identical to iter003_std_aug (Cell B): aug=standard, sgd 0.1,
+# momentum 0.9, wd 5e-4, nesterov, epochs=60, seed=42.
+exp_name: cifar10_iter007_multistep
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model:
+  arch: resnet34
+  num_classes: 10
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: multistep
+  milestones: [30, 45]
+  epochs: 60
+
+output:
+  root: runs
