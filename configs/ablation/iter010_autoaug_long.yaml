@@ -1,0 +1,30 @@
+# Ablation iter 010 — Cell C × A6=100 (AutoAugment + long-train)
+# Single-axis delta vs iter002_autoaug (Cell C, 60 ep):
+#   training.epochs: 60 -> 100
+# Tests whether A1 (standard->autoaug, +0.42 pp single-seed @ 60 ep)
+# and A6 (60->100 ep, +0.54 pp single-seed on Cell B) compose on
+# Cell C's recipe. Cosine T_max scales with epochs in train.py, so
+# this is a clean A6 test on the autoaug recipe. Everything else
+# (sgd 0.1 mom 0.9 nesterov wd 5e-4, cosine, seed=42) held fixed.
+exp_name: cifar10_iter010_autoaug_long
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: autoaugment
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 100
+
+output: { root: runs }
