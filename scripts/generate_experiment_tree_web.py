@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import html
 import json
 import math
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +28,55 @@ USER_SUMMARY = ROOT / "state" / "user_summary.md"
 USER_SUMMARIES = ROOT / "state" / "user_summaries.md"
 
 
+def _git_show_blob(branch: str, path: str) -> bytes | None:
+    """Read `path` at `branch` in this repo via `git show`. Returns None on
+    any failure (branch missing, file missing, git not available, etc.).
+
+    Used to recover iter outputs that git_iter_commit.sh has wiped from
+    main's working tree but still exist on autoresearch/iter-NNN."""
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{branch}:{path}"],
+            cwd=str(ROOT),
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+    return None
+
+
+def _read_iter_artifact(rel_path: str) -> bytes | None:
+    """Read an iter artifact (figs/iter_NNN/* or logs/iteration_NNN.md).
+
+    Tries main's working tree first; falls back to autoresearch/iter-NNN
+    via git show. The fallback is necessary because git_iter_commit.sh
+    only restores the most-recent iter's outputs — earlier iters' figs
+    and reports stay only on their per-iter branch."""
+    full = ROOT / rel_path
+    if full.exists() and full.is_file():
+        try:
+            return full.read_bytes()
+        except OSError:
+            pass
+    # Try git fallback. Only viable for path patterns that name the iter.
+    m = re.search(r"(?:figs/iter_|logs/iteration_)(\d+)", rel_path)
+    if not m:
+        return None
+    iter_pad = m.group(1)
+    return _git_show_blob(f"autoresearch/iter-{iter_pad}", rel_path)
+
+
+def _read_iter_text(rel_path: str) -> str:
+    """Text-mode wrapper around _read_iter_artifact."""
+    blob = _read_iter_artifact(rel_path)
+    if blob is None:
+        return ""
+    return blob.decode("utf-8", errors="replace")
+
+
 @dataclass
 class IterRow:
     iter_id: int
@@ -36,7 +87,7 @@ class IterRow:
     pid: str
     started_at: str
     finished_at: str
-    best_metric: str   # column 9 of state.tsv — name varies by launcher (best_metric / best_h / best_acc / ...)
+    best_metric: str   # column 9 of state.tsv — name varies by project (best_metric / best_acc / best_f1 / ...)
     verdict: str
 
 
@@ -82,8 +133,8 @@ def read_state(path: Path) -> list[IterRow]:
                     finished_at=raw.get("finished_at", ""),
                     # state.tsv column 9: try common names, fall back to whatever the launcher used
                     best_metric=(raw.get("best_metric")
-                                 or raw.get("best_h")
                                  or raw.get("best_acc")
+                                 or raw.get("best_f1")
                                  or list(raw.values())[8] if len(raw) > 8 else ""),
                     verdict=raw.get("verdict", ""),
                 )
@@ -154,16 +205,6 @@ def parse_metric_table(report: str) -> dict[str, str]:
     return metrics
 
 
-def load_gamma_json(iter_id: int) -> dict[str, Any]:
-    path = ROOT / "figs" / f"iter_{iter_id:03d}" / "gamma_sweep.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
 def load_ckpt_metrics(exp_name: str) -> dict[str, Any]:
     """Best-effort checkpoint metric loading for running jobs.
 
@@ -174,12 +215,11 @@ def load_ckpt_metrics(exp_name: str) -> dict[str, Any]:
     except Exception:
         return {}
     # Try common output-root layouts. Adapt for your launcher if it writes
-    # checkpoints elsewhere (e.g. add `runs_<your_pkg>/<exp>/best.pth`).
+    # checkpoints elsewhere.
     candidates: list[Path] = []
-    for root in ("runs", "runs_autoresearch"):
+    for root in ("runs",):
         candidates += sorted((ROOT / root / exp_name).glob("*/best.pth"))
         candidates += sorted((ROOT / root / exp_name).glob("best.pth"))
-        candidates += sorted((ROOT / root / exp_name).glob("*/best_h.pth"))   # legacy
         candidates += sorted((ROOT / root / exp_name).glob("*/final.pth"))
         candidates += sorted((ROOT / root / exp_name).glob("final.pth"))
     if not candidates:
@@ -270,10 +310,11 @@ def fmt_num(v: Any) -> str:
 
 def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, sibling_count: int) -> IterNode:
     iter_pad = f"{row.iter_id:03d}"
+    # Use the helper so we fall back to the iter's branch when git_iter_commit
+    # has wiped older iters' reports from main's working tree.
+    report = _read_iter_text(f"logs/iteration_{iter_pad}.md")
     report_path = ROOT / "logs" / f"iteration_{iter_pad}.md"
-    report = report_path.read_text(encoding="utf-8", errors="replace") if report_path.exists() else ""
     cfg = config_values(row.config)
-    gamma = load_gamma_json(row.iter_id)
     ckpt = load_ckpt_metrics(row.exp_name) if row.status == "running" or not row.best_metric else {}
     parsed = parse_metric_table(report) if report else {}
 
@@ -308,27 +349,50 @@ def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, siblin
         detail_bits.append(row.verdict)
     elif row.status:
         detail_bits.append(row.status)
-    if cfg.get("ap_loss_weight"):
-        detail_bits.append(f"w={cfg['ap_loss_weight']}")
-    if cfg.get("feature_type"):
-        detail_bits.append(cfg["feature_type"])
+    # Project-specific quick-glance config bits (override these for your
+    # domain — pick the 1-2 hyperparameters that distinguish ablation cells).
+    # Demo: optimizer + augmentation.
+    if cfg.get("optimizer"):
+        detail_bits.append(cfg["optimizer"])
+    if cfg.get("augmentation"):
+        detail_bits.append(f"aug={cfg['augmentation']}")
     detail = " · ".join(detail_bits)
 
     links = []
-    if report_path.exists():
+    # Report link is added if the report exists EITHER in the working tree
+    # OR on the iter branch (the helper's fallback). copy_one() handles the
+    # actual bundling via the same fallback, so a working-tree miss still
+    # produces a clickable artifact in docs/autoresearch_dashboard/assets/.
+    if report:
         links.append({"label": "report", "href": f"../logs/iteration_{iter_pad}.md"})
     if row.config and (ROOT / row.config).exists():
         links.append({"label": "config", "href": f"../{row.config}"})
     fig_dir = ROOT / "figs" / f"iter_{iter_pad}"
     visuals = []
-    for filename, label in [
-        ("gamma_sweep.png", "gamma"),
-        ("tsne.png", "t-SNE"),
-        ("attn.png", "attention"),
-        ("attention_maps.png", "attention_maps"),
-        ("tsne_attr_pred.png", "attr t-SNE"),
-    ]:
+
+    def _iter_artifact_exists(filename: str) -> bool:
+        """True if the iter has this artifact in working tree OR on its branch."""
         if (fig_dir / filename).exists():
+            return True
+        # Cheap branch existence check via `git cat-file -e`.
+        try:
+            r = subprocess.run(
+                ["git", "cat-file", "-e", f"autoresearch/iter-{iter_pad}:figs/iter_{iter_pad}/{filename}"],
+                cwd=str(ROOT), capture_output=True, timeout=5,
+            )
+            return r.returncode == 0
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            return False
+
+    # Common viz filenames the dashboard looks for. Adapt this list for your
+    # project's viz scripts. Demo: tsne.png + cam.png + per_class.csv.
+    for filename, label in [
+        ("tsne.png", "t-SNE"),
+        ("cam.png", "Grad-CAM"),
+        ("per_class.png", "per-class"),
+        ("confusion.png", "confusion"),
+    ]:
+        if _iter_artifact_exists(filename):
             href = f"../figs/iter_{iter_pad}/{filename}"
             links.append({"label": label, "href": href})
             visuals.append({"label": label, "href": href})
@@ -336,7 +400,7 @@ def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, siblin
         ("per_class.csv", "per-class"),
         ("per_class_delta.csv", "delta"),
     ]:
-        if (fig_dir / filename).exists():
+        if _iter_artifact_exists(filename):
             links.append({"label": label, "href": f"../figs/iter_{iter_pad}/{filename}"})
 
     x = parent_x + 340
@@ -1175,50 +1239,76 @@ def bundle_assets(tree: dict[str, Any], out_path: Path, *,
 
     Optimizations:
       • Content-hash dedup — two source files with identical bytes share ONE
-        copy in the bundle (e.g. attn.png and attention_maps.png are usually
-        byte-equal copies of the same render; saves ~30 MB on the SUN data).
+        copy in the bundle. On large iter sets, this can save tens of MB.
       • CSVs (per_class.csv, per_class_delta*.csv) are skipped by default —
         they're data dumps, not web assets, and are still accessible from the
         repo if someone really wants them.
       • The unused manifest.json is no longer written.
     """
-    import hashlib
+    # hashlib already imported at module top
     asset_dir = out_path.parent / ("assets" if out_path.name == "index.html" else f"{out_path.stem}_assets")
     if asset_dir.exists():
         shutil.rmtree(asset_dir)
     asset_dir.mkdir(parents=True, exist_ok=True)
 
-    copied: dict[str, str] = {}      # source-path → bundled relpath
+    copied: dict[str, str] = {}      # cache key → bundled relpath
     by_hash: dict[str, str] = {}     # content-hash → bundled relpath
 
-    def file_hash(p: Path) -> str:
-        h = hashlib.md5()
-        with p.open("rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
-
     def copy_one(href: str, node_id: str) -> str:
-        src = _resolve_href(out_path, href)
-        if src is None or not src.exists() or not src.is_file():
+        """Resolve href → bundled relpath. Reads the source bytes from the
+        working tree if present, otherwise falls back to autoresearch/iter-NNN
+        branch via `git show` (because git_iter_commit.sh only restores the
+        most-recent iter's outputs to main's working tree)."""
+        # CSV bundling is opt-in to keep dashboard size bounded (the demo
+        # ships per_class.csv but on large iter sets these add up).
+        if exclude_csv and href.lower().endswith(".csv"):
             return href
-        if exclude_csv and src.suffix.lower() == ".csv":
-            return href                  # leave the original href — file isn't bundled
-        key = str(src)
-        if key in copied:
-            return copied[key]
-        # Content-hash dedup
-        digest = file_hash(src)
+
+        src_path = _resolve_href(out_path, href)
+        src_bytes: bytes | None = None
+        src_name = ""
+        cache_key = ""
+
+        if src_path is not None and src_path.exists() and src_path.is_file():
+            try:
+                src_bytes = src_path.read_bytes()
+                src_name = src_path.name
+                cache_key = str(src_path)
+            except OSError:
+                src_bytes = None
+
+        if src_bytes is None:
+            # Working-tree miss — try the iter branch. Path patterns we know
+            # are committed on autoresearch/iter-NNN: figs/iter_NNN/* and
+            # logs/iteration_NNN.md.
+            m = re.search(r"(figs/iter_(\d+)/[^?#]+|logs/iteration_(\d+)\.md)", href)
+            if m and src_path is not None:
+                rel_in_repo = m.group(1)
+                iter_pad = m.group(2) or m.group(3)
+                blob = _git_show_blob(f"autoresearch/iter-{iter_pad}", rel_in_repo)
+                if blob is not None:
+                    src_bytes = blob
+                    src_name = Path(rel_in_repo).name
+                    cache_key = f"git:autoresearch/iter-{iter_pad}:{rel_in_repo}"
+
+        if src_bytes is None:
+            return href  # genuinely missing; leave broken href so the bug is visible
+
+        if cache_key in copied:
+            return copied[cache_key]
+
+        digest = hashlib.md5(src_bytes).hexdigest()
         if digest in by_hash:
-            copied[key] = by_hash[digest]
+            copied[cache_key] = by_hash[digest]
             return by_hash[digest]
+
         safe_node = re.sub(r"[^A-Za-z0-9_.-]+", "_", node_id)
         node_dir = asset_dir / safe_node
         node_dir.mkdir(parents=True, exist_ok=True)
-        dst = node_dir / src.name
-        shutil.copy2(src, dst)
+        dst = node_dir / src_name
+        dst.write_bytes(src_bytes)
         rel = dst.relative_to(out_path.parent).as_posix()
-        copied[key] = rel
+        copied[cache_key] = rel
         by_hash[digest] = rel
         return rel
 
