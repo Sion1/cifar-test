@@ -1,0 +1,31 @@
+# Cell D — +adamw. Single-axis delta vs Cell B (iter 3):
+#   training.optimizer: sgd → adamw
+#   training.lr: 0.1 → 1.0e-3   (per program.md A4 catalog: AdamW range is {1e-3, 5e-4})
+# Tests A2 (optimizer) at the standard-aug base. weight_decay stays at 5e-4 to
+# stay inside the program.md A5 catalog (sweep {5e-4, 1e-4, 0}); momentum/nesterov
+# fields are SGD-only and dropped here. Everything else (aug, scheduler, epochs,
+# seed, batch_size, model) identical to iter003_std_aug.yaml so any Δ vs Cell B
+# is attributable to the optimizer switch.
+exp_name: cifar10_iter005_adamw
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model:
+  arch: resnet34
+  num_classes: 10
+
+training:
+  optimizer: adamw
+  lr: 1.0e-3
+  weight_decay: 5.0e-4
+  scheduler: cosine
+  epochs: 60
+
+output:
+  root: runs

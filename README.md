@@ -56,8 +56,11 @@ the same loop will drive *your* research.
 **Required (steps 2–4 — single-experiment + visualization)**:
 
 ```bash
-pip install torch torchvision pyyaml scikit-learn matplotlib
+pip install -r requirements.txt
 ```
+
+(or, if you prefer to pick versions yourself: `pip install torch torchvision
+pyyaml numpy scikit-learn matplotlib wandb`)
 
 **Required for step 5 (the autonomous loop)**:
 
@@ -80,19 +83,62 @@ codex --version        # optional, used in consensus_iter.sh
 gemini --version       # optional
 ```
 
-**Optional — Weights & Biases tracking**:
+**Optional integrations (both strongly recommended; each is independent)**:
 
-`train.py` will log per-epoch train/test loss & acc to W&B if (a) `wandb`
-is importable, AND (b) `WANDB_PROJECT` is set OR `wandb.project` is in
-the YAML config. Without both, training silently falls back to local
-`history.json`.
+These are **optional** — the demo runs end-to-end without them — but each
+adds something the loop can't reproduce locally:
+
+<details>
+<summary><b>(a) Weights & Biases tracking</b> — per-experiment metrics dashboard</summary>
+
+`train.py` logs per-epoch train/test loss + acc to W&B if both:
+1. `wandb` is importable in your Python env, AND
+2. `WANDB_PROJECT` env is set, OR `wandb.project` is in the YAML.
+
+Without both, training silently falls back to local `runs/<exp>/history.json`.
 
 ```bash
-pip install wandb
-wandb login                              # paste your API key from wandb.ai/authorize
-export WANDB_PROJECT=agentic-research-cifar10-demo
-# or in YAML: wandb: { project: my-project, tags: [demo] }
+pip install wandb                                    # (already in requirements.txt)
+wandb login                                          # paste API key from wandb.ai/authorize
+                                                     # OR set WANDB_API_KEY in env
+export WANDB_PROJECT=agentic-research-cifar10-demo   # OR put under wandb.project in YAML
 ```
+
+`first_launch_setup.sh --wandb` reads the key from `~/.netrc` (where
+`wandb login` stashes it) so you don't need to re-export it.
+</details>
+
+<details>
+<summary><b>(b) git + GitHub remote</b> — per-iter audit trail + browsable PRs</summary>
+
+When enabled, every analyzed iter becomes a branch
+`autoresearch/iter-NNN` with the config diff, log, viz outputs, and
+consensus verdict. Pushing to GitHub turns each into a reviewable PR.
+
+```bash
+# git itself: ships with most distros; verify with `git --version`.
+# gh CLI is OPTIONAL — only needed if you want auto-PR creation. Without
+# gh, branches still get pushed; you open the PRs manually on github.com.
+type gh || {
+    # Debian/Ubuntu install:
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list
+    apt update && apt install -y gh
+    # macOS:    brew install gh
+    # Conda:    conda install -c conda-forge gh
+}
+gh auth login        # device-code flow
+gh auth setup-git    # REQUIRED — wires git to use gh's credentials
+                     # (without this, HTTPS push prompts for a password
+                     #  and GitHub rejects passwords since 2021-08)
+```
+
+If you skip gh entirely, you can still use a Personal Access Token instead
+— see `## GitHub integration (optional, recommended)` further below for
+the no-gh fallback path.
+</details>
 
 ### 2. First-launch onboarding (interactive, required once)
 
@@ -189,20 +235,45 @@ AUTORES_CONSENSUS_EVAL_AGENTS=claude,codex,gemini
 AUTORES_CONSENSUS_TIMEOUT=900
 EOF
 
-# launch the supervisor in tmux
+# launch the supervisor in tmux. Two tweaks:
+#   - exit code 7 from loop.sh = "next tick should fire immediately" (used
+#     after analyze finishes, so propose can run without a 5-min sleep gap).
+#   - split panes: loop in pane 0, tail of driver.log in pane 1, so attach
+#     gives you a live view instead of an empty terminal.
 tmux new-session -d -s autores "
     export AUTORES_HOST_TAG=$(hostname)
     export MAX_CONCURRENT=2
     export AUTORES_MAX_ITERATIONS=30
     export AUTORES_TARGET_METRIC=0.96
     export AUTORES_TARGET_DIRECTION=max
-    while true; do bash loop.sh; sleep 300; done
+    while true; do bash loop.sh; rc=\$?; [ \$rc -eq 7 ] || sleep 300; done
 "
+tmux split-window -h -t autores "tail -F /path/to/agent-test/logs/driver.log"
+tmux select-pane -t autores:0.0
 ```
 
 The loop ticks every 5 min: reaps finished trainings, calls an LLM to analyze
 each one, runs a 5-cycle multi-agent consensus on the next-step, then proposes
 and launches the next experiment.
+
+#### What to expect after launching
+
+A new clone with no completed iters yet has roughly this timeline:
+
+| t      | event                                                    |
+|--------|----------------------------------------------------------|
+| 0      | tmux session created, first `bash loop.sh` tick fires    |
+| ≤ 60 s | reap pass (no rows), goes straight to propose            |
+| 1-3 min | claude -p proposes iter 0, writes config, calls `run_experiment.sh` |
+| 1-2 min later | iter 0 training finishes (1 epoch on CIFAR-10 takes ~30 s, plus dataset download on first run) |
+| next tick | reaper marks iter 0 completed, analyze starts             |
+| 3-10 min | claude -p analyzes (writes `iteration_000.md`, generates 4 viz, updates CLAUDE.md) — heartbeat lines appear in `driver.log` every 60 s |
+| analyze done + ≤ 60 s | exit 7 → next tick fires immediately, proposes iter 1 |
+
+So the **first iter to iter-1 lag is ~10-15 min**, not 30 s. If
+`driver.log` is silent for > 2 min during analyze, check that the
+`↻ analyze iter NNN still running` heartbeat lines are appearing — they
+confirm claude is thinking, not stuck.
 
 ### 8. Watch the loop in real time
 
@@ -223,6 +294,44 @@ keep open in a side tmux pane indefinitely.
 If you set up wandb in step 1, you can also watch live curves at
 [wandb.ai](https://wandb.ai) under your project — each iter becomes its
 own run with the iter's `exp_name`.
+
+### 9. Stopping the loop
+
+The loop has four built-in stop conditions, in priority order:
+
+| # | Trigger | Default | How to use |
+|---|---|---|---|
+| 1 | `state/.stop` sentinel exists | n/a | `touch state/.stop` — graceful, recommended |
+| 2 | `LAUNCHED ≥ AUTORES_MAX_ITERATIONS` | 20 | `export AUTORES_MAX_ITERATIONS=N` (any value) |
+| 3 | 3-of-5 last iters `Failure` verdict | always on | self-protective — auto-stops a misbehaving run |
+| 4 | best metric ≥ `AUTORES_TARGET_METRIC` | disabled | `export AUTORES_TARGET_METRIC=0.95` |
+
+**Manual stop, recommended (graceful)**:
+
+```bash
+touch /path/to/agent-test/state/.stop
+# next tick (≤ 60 s) logs the stop reason, removes the sentinel, exits.
+# Already-running trainings finish on their own; nothing new is proposed.
+```
+
+**Hard stop (kills the supervisor)**:
+
+```bash
+tmux kill-session -t autores
+# stops loop.sh immediately. In-flight trainings keep running until they
+# finish their current epoch (they're detached); kill those by PID if needed.
+```
+
+**Pause (no-op ticks until you re-enable)**:
+
+```bash
+rm /path/to/agent-test/state/.loop.enabled.$(hostname)   # pause
+touch /path/to/agent-test/state/.loop.enabled.$(hostname) # resume
+# loop ticks fire but exit at the sentinel guard until you touch it back.
+```
+
+`watch_loop.py` shows current budget (`launched/MAX_ITERATIONS`) at the top
+of its ledger panel, so you know where you are without reading source.
 
 ---
 
@@ -479,8 +588,8 @@ export AUTORES_CONSENSUS_EVAL_AGENTS=claude,codex,gemini
 export AUTORES_CONSENSUS_TIMEOUT=900            # seconds per agent
 
 # Auto-PR:
-export AUTORES_GIT_AUTOPUSH=1                   # default 1
-export AUTORES_GIT_REMOTE=origin
+export AUTORES_GIT_AUTOPUSH=0                   # default 0 (local-only); set 1 to push branches + open PRs
+export AUTORES_GIT_REMOTE=origin                # default 'origin'
 
 # Dashboard auto-regen:
 export AUTORES_DASHBOARD_ENABLED=1              # default 1
@@ -501,4 +610,5 @@ template, not a benchmark.
 
 ## License
 
-[Your choice — fill in when you publish.]
+[MIT](LICENSE) — research/demo-friendly default. Swap for Apache-2.0 if you
+prefer explicit patent grants.
