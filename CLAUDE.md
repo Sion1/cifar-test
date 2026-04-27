@@ -59,6 +59,21 @@ Reference: cell A is the floor. Anything in cells B-F should beat this.
      you're correcting a mistake; the agent reads back its own past notes
      to build context for the next iteration. -->
 
+### Iteration 000 — framework smoketest (cifar10_resnet34, EPOCHS_OVERRIDE=1)
+The first launch ran the standard-aug baseline config but with `EPOCHS_OVERRIDE=1`,
+producing test_acc=0.3045 / test_loss=1.871 after a single 17.9 s epoch. The
+training loop, data pipeline, optimizer, checkpointing and viz scripts all
+executed cleanly, so the framework itself is healthy — but the config's stated
+`epochs: 60` was overridden, so this run does **not** fill any cell of the
+ablation matrix. Per-class accuracy after 1 epoch is wildly uneven
+(cat=0%, bird=0.6%, deer=13.9% vs. dog=55.5%, automobile=52.4%, frog=47.6%),
+t-SNE shows only a vehicle-vs-animal split with no per-class clusters, and
+Grad-CAM blobs are object-centred but loose and occasionally fixate on
+background bands — all expected for an under-trained model. Lesson: iter 1
+must launch the **real Cell A bare baseline** (`configs/ablation/no_aug.yaml`,
+augmentation=none, 60 epochs, no `EPOCHS_OVERRIDE`) to actually establish the
+floor. Verdict: **Noise** (smoketest, not an ablation point).
+
 ---
 
 ## Operating rules per iteration (framework-supplied; keep as-is)
