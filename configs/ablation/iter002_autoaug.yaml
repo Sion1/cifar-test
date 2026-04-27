@@ -1,0 +1,27 @@
+# Ablation iter 002 — Cell C: AutoAugment policy
+# Single-axis delta vs. baseline configs/cifar10_resnet34.yaml:
+#   data.augmentation: standard -> autoaugment
+# Everything else (sgd, lr=0.1, wd=5e-4, cosine, 60 epochs, seed=42) held fixed
+# so the gain (or loss) is attributable to A1 alone.
+exp_name: cifar10_iter002_autoaug
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: autoaugment
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+
+output: { root: runs }
