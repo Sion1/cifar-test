@@ -13,6 +13,11 @@
 set -u
 cd "$(dirname "$0")"
 
+# Ensure runtime dirs exist before anything writes to them. logs/ and state/
+# aren't tracked in git (see .gitignore), so a fresh clone has neither —
+# and 'logs/driver.log' gets written from the very first log() call below.
+mkdir -p logs state
+
 # Optional per-tick env overrides — edit state/.consensus.env (or
 # legacy .crossval.env) to change AUTORES_CONSENSUS_* / AUTORES_CROSSVAL_*
 # without restarting the tmux loop. Picks up on the NEXT tick.

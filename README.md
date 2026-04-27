@@ -482,8 +482,8 @@ export AUTORES_CONSENSUS_EVAL_AGENTS=claude,codex,gemini
 export AUTORES_CONSENSUS_TIMEOUT=900            # seconds per agent
 
 # Auto-PR:
-export AUTORES_GIT_AUTOPUSH=1                   # default 1
-export AUTORES_GIT_REMOTE=origin
+export AUTORES_GIT_AUTOPUSH=0                   # default 0 (local-only); set 1 to push branches + open PRs
+export AUTORES_GIT_REMOTE=origin                # default 'origin'
 
 # Dashboard auto-regen:
 export AUTORES_DASHBOARD_ENABLED=1              # default 1
@@ -504,4 +504,5 @@ template, not a benchmark.
 
 ## License
 
-[Your choice — fill in when you publish.]
+[MIT](LICENSE) — research/demo-friendly default. Swap for Apache-2.0 if you
+prefer explicit patent grants.
