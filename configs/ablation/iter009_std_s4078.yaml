@@ -1,0 +1,27 @@
+# Ablation: Cell B 2-seed replay (seed=4078) — hardening step.
+# Single-axis delta from iter004_std recipe: seed 42 → 4078, everything else
+# identical (standard aug, sgd 0.1 mom 0.9 nesterov wd 5e-4, cosine, 60 ep).
+# Pair-partner of iter008 (Cell C @ seed=4078). Together these two complete
+# the program.md "After phase 1: pick top 2, run with seed=4078, report
+# 2-seed mean" requirement, hardening the C−B = +0.42 pp gap before a
+# phase-1 winner is crowned in CLAUDE.md.
+exp_name: cifar10_iter009_std_s4078
+seed: 4078
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+output: { root: runs }
