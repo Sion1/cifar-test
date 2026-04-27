@@ -6,14 +6,17 @@
 #   1. Switch to (or create) branch "autoresearch/iter-NNN"
 #   2. Stage all changes (config + report + viz + CLAUDE.md edits + state.tsv row)
 #   3. Build a structured commit message using metrics from final.pth + iteration_NNN.md
-#   4. Commit (no merge; AUTO-PUSH by default since AUTORES_GIT_AUTOPUSH defaults to 1 — set to 0 to keep branch local)
+#   4. Commit (no merge; LOCAL-ONLY by default — set AUTORES_GIT_AUTOPUSH=1
+#      to push the branch to origin, normally done via first_launch_setup.sh)
 #   5. Switch back to main without merging
 #
 # Usage:
 #   bash scripts/git_iter_commit.sh <ITER_NUM>
 #
 # Env:
-#   AUTORES_GIT_AUTOPUSH=1 — also push the branch to origin (default: 1 / push enabled)
+#   AUTORES_GIT_AUTOPUSH=0 — push to origin if 1 (default: 0 / local-only).
+#                            first_launch_setup.sh writes 1 into state/.env if
+#                            you answer Y to the GitHub-push prompt.
 #   AUTORES_GIT_REMOTE=origin — remote name to push to (default: origin)
 #
 # Exit codes:
@@ -45,14 +48,17 @@ if [ ! -f "$REPORT" ]; then
     exit 1
 fi
 
-# Read state.tsv row to extract verdict + best_h
+# Read state.tsv row to extract verdict + the iter's primary metric (col 9).
+# Column 9 is project-defined ("best_metric" by default; could be "best_acc",
+# "best_f1", "best_iou", etc.). Stored verbatim into BEST_METRIC; the
+# commit subject and PR body just print whatever is there.
 ROW=$(awk -F'\t' -v i="$ITER" '$1 == i {print; exit}' state/iterations.tsv)
 if [ -z "$ROW" ]; then
     log "ERROR: no row for iter $ITER in state/iterations.tsv"
     exit 1
 fi
 EXP_NAME=$(echo "$ROW" | awk -F'\t' '{print $3}')
-BEST_H=$(echo "$ROW" | awk -F'\t' '{print $9}')
+BEST_METRIC=$(echo "$ROW" | awk -F'\t' '{print $9}')
 VERDICT=$(echo "$ROW" | awk -F'\t' '{print $10}')
 
 # Extract one-line hypothesis summary from §1 of the report
@@ -81,9 +87,10 @@ DECISION=$(awk '/^## 7\. Decision/{flag=1; next} /^## 8\./{flag=0} flag && NF{pr
 # fails with "src refspec ... does not match any" because the local ref was
 # never created — the commit is orphaned.
 #
-# Bug history: 2026-04-26 16:40 in Hysyn-ZSL-v3-SUN-autoresearch — iter009
-# committed as f61e74a but no autoresearch/iter-009 ref existed; manual
-# `git update-ref` recovery + PR #9 needed.
+# Bug history: in a prior project, an iter committed but had no
+# autoresearch/iter-NNN ref afterwards; manual `git update-ref` recovery
+# was needed. The HEAD-drift root cause is fixed by the hardcoded
+# PREV_BRANCH=main below.
 PREV_BRANCH="main"
 
 # git_checked: run a git command and HONOR its exit code.
@@ -97,10 +104,12 @@ PREV_BRANCH="main"
 # `git push origin BRANCH` step then died with "src refspec BRANCH does
 # not match any" and the per-iter PR was lost.
 #
-# Bug history: 2026-04-26 17:01 (Hysyn-ZSL-v3-SUN-autoresearch iter010,
-# repeating the iter009 16:40 incident). Manual `git update-ref` rescue +
-# PR #10 needed. Reflog showed `checkout: moving from iter-008 to iter-008`
-# — the `-b iter-009 main` checkout had been refused and ignored.
+# Bug history: a prior project repeated this failure mode after an
+# initial fix to PREV_BRANCH alone — turned out the cosmetic `| tail -1`
+# pipeline was eating the checkout's exit code, so the script kept
+# committing on the wrong branch even when checkout was refused. The
+# reflog gave it away: `checkout: moving from iter-N to iter-N`, with
+# the new iter never appearing.
 #
 # This wrapper: runs git, captures stderr to a temp file, uses the real
 # rc, mirrors stderr to driver.log, and exits the entire script on
@@ -166,7 +175,7 @@ for _path in \
     "logs/iteration_${ITER_PAD}.md" \
     "figs/iter_${ITER_PAD}/" \
     "scripts/per_class_delta_iter${ITER_PAD}.py" \
-    "scripts/plot_gamma_sweep_iter${ITER_PAD}.py" \
+    "scripts/plot_metric_iter${ITER_PAD}.py" \
     CLAUDE.md \
     state/iterations.tsv; do
     # `[ -e ]` short-circuits on absent paths; the glob can also expand to a
@@ -188,7 +197,7 @@ fi
 TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 MSG_FILE=$(mktemp)
 cat > "$MSG_FILE" <<EOF
-iter${ITER_PAD}: ${VERDICT:-Unknown} — H=${BEST_H:-?}  (${EXP_NAME})
+iter${ITER_PAD}: ${VERDICT:-Unknown} — metric=${BEST_METRIC:-?}  (${EXP_NAME})
 
 ## Hypothesis
 ${HYPOTHESIS_LINE}
@@ -202,7 +211,7 @@ ${U_ROW}
 ${S_ROW}
 
 ## Verdict
-**${VERDICT:-Unknown}** — best_h=${BEST_H:-?}
+**${VERDICT:-Unknown}** — best_metric=${BEST_METRIC:-?}
 
 ## Decision
 ${DECISION}
@@ -230,7 +239,7 @@ log "committed iter${ITER_PAD} as ${COMMIT_SHA} on branch ${BRANCH}"
 
 # Auto-push + auto-PR creation (default ON — user reviews PRs in GitHub UI).
 # To disable, export AUTORES_GIT_AUTOPUSH=0 before launching the loop.
-if [ "${AUTORES_GIT_AUTOPUSH:-1}" = "1" ]; then
+if [ "${AUTORES_GIT_AUTOPUSH:-0}" = "1" ]; then
     REMOTE="${AUTORES_GIT_REMOTE:-origin}"
     if git remote get-url "$REMOTE" >/dev/null 2>&1; then
         log "pushing ${BRANCH} to ${REMOTE}"
@@ -246,7 +255,7 @@ if [ "${AUTORES_GIT_AUTOPUSH:-1}" = "1" ]; then
             if [ -n "$EXISTING_PR" ]; then
                 log "PR #${EXISTING_PR} already exists for ${BRANCH}; skipping create"
             else
-                PR_TITLE="iter${ITER_PAD}: ${VERDICT:-Unknown} — H=${BEST_H:-?}"
+                PR_TITLE="iter${ITER_PAD}: ${VERDICT:-Unknown} — metric=${BEST_METRIC:-?}"
                 PR_URL=$($GH_BIN api -X POST "repos/${REPO_PATH}/pulls" \
                     -f title="$PR_TITLE" \
                     -f head="$BRANCH" \
@@ -254,7 +263,7 @@ if [ "${AUTORES_GIT_AUTOPUSH:-1}" = "1" ]; then
                     -f body="Auto-generated PR by autoresearch-bot at $(date -u '+%Y-%m-%d %H:%M:%S UTC').
 
 ## Verdict
-**${VERDICT:-Unknown}** — best_h=${BEST_H:-?}
+**${VERDICT:-Unknown}** — best_metric=${BEST_METRIC:-?}
 
 ## Hypothesis
 ${HYPOTHESIS_LINE}
@@ -302,8 +311,7 @@ git checkout "$BRANCH" -- \
 # does not exist on the branch (e.g., Bug-verdict iters skip viz). Without
 # this restore, viz pngs/csvs vanish from main's working tree after commit
 # (they remain on the per-iter branch), and the user sees empty figs/iter_NNN/
-# when reviewing locally. Discovered 2026-04-26 via figs/iter_004..007 missing
-# despite per-iter branches having attn.png / gamma_sweep.png / tsne.png.
+# when reviewing locally.
 if git ls-tree -r --name-only "$BRANCH" -- "figs/iter_${ITER_PAD}/" 2>/dev/null | grep -q .; then
     git checkout "$BRANCH" -- "figs/iter_${ITER_PAD}/" 2>/dev/null || true
 fi

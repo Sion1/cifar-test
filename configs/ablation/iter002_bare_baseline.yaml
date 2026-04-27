@@ -1,0 +1,29 @@
+# Cell A — bare baseline (augmentation=none, otherwise default).
+# Single-axis delta vs configs/cifar10_resnet34.yaml: data.augmentation standard → none.
+# Establishes the LOCKED floor for CLAUDE.md "Baseline numbers" — every other
+# matrix cell (B–F) must beat this number to count as a real contribution.
+exp_name: cifar10_iter002_bare_baseline
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: none
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model:
+  arch: resnet34
+  num_classes: 10
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+
+output:
+  root: runs
