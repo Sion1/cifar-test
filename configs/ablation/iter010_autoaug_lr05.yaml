@@ -1,0 +1,46 @@
+# iter 010 — autoaug + LR=0.05 (A4 catalog sweep, single-axis vs Cell C / iter004).
+# Delta vs iter004_autoaug.yaml: training.lr 0.1 -> 0.05. Everything else
+# identical (aug=autoaugment, sgd, momentum 0.9, wd 5e-4, nesterov, cosine,
+# epochs=60, seed=42).
+#
+# Hypothesis: Cell C had train_acc=0.9625 with only a 1.0 pp train-test gap
+# (iter004 §4) — explicit under-fit headroom that no completed cell has
+# consumed. iter006 (Cell F) tried more epochs on the *saturated* Cell B
+# recipe and failed. Here the recipe is the *under-fit* one. Halving the
+# base LR gives a smoother cosine trajectory; on an under-fit recipe this
+# is the move that can consume headroom (smaller per-step noise → finer
+# fitting in cosine's tail) without trading off the autoaug regularizer.
+# Stays inside catalog A4 = {0.1, 0.05, 0.01} for SGD.
+#
+# Predicted: best_acc ∈ [0.953, 0.960]; train_acc rises toward 0.97-0.98
+# (gap shrinks below Cell C's 1.0 pp -> mechanism fired) OR stays at
+# 0.96 (gap unchanged, headline ~Cell C -> Noise/Partial).
+# Falsifier: best_acc ≤ 0.9528 (Cell C) ⇒ LR=0.1 was already optimal for
+# autoaug too, and the under-fit signal in Cell C's history was not
+# LR-actionable. A drop > 0.5 pp would also pin A4=0.05 as a clean negative
+# on this recipe (would not generalize to other aug levels).
+exp_name: cifar10_iter010_autoaug_lr05
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: autoaugment
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model:
+  arch: resnet34
+  num_classes: 10
+
+training:
+  optimizer: sgd
+  lr: 0.05
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+
+output:
+  root: runs
