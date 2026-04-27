@@ -1,0 +1,34 @@
+# 2-seed hardening pass for Cell B (std aug) — seed=4078 replay of iter003.
+# Single delta vs iter003_std_aug.yaml: seed 42 -> 4078 (program.md
+# §Required ablation strategy: "After phase 1, pick top 2, run with
+# seed=4078, report 2-seed mean."). All other knobs identical to iter003
+# (Cell B): aug=standard, sgd 0.1, momentum 0.9, wd 5e-4, nesterov,
+# cosine, epochs=60. Cell B is currently "Best so far" at 0.9481; this
+# 2nd seed validates whether the +6.11 pp gain over Cell A is robust or
+# seed-luck. Pairs with iter008 (Cell C @ seed 4078) so both top-2 cells
+# get a 2-seed mean before a winner is crowned in CLAUDE.md.
+exp_name: cifar10_iter009_std_aug_seed4078
+seed: 4078
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model:
+  arch: resnet34
+  num_classes: 10
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+
+output:
+  root: runs

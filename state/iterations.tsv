@@ -1,0 +1,11 @@
+iter	status	exp_name	config	gpu	pid	started_at	finished_at	best_metric	verdict
+0	analyzed	cifar10_baseline	configs/cifar10_resnet34.yaml	0	125205	2026-04-27T06:12:48+0000	2026-04-27 06:14:13	0.2911	Bug
+2	analyzed	cifar10_iter002_bare_baseline	configs/ablation/iter002_bare_baseline.yaml	0	127291	2026-04-27T06:29:14+0000	2026-04-27 07:03:18	0.8870	Success
+3	analyzed	cifar10_iter003_std_aug	configs/ablation/iter003_std_aug.yaml	1	129062	2026-04-27T06:35:15+0000	2026-04-27 07:09:14	0.9481	Success
+4	analyzed	cifar10_iter004_autoaug	configs/ablation/iter004_autoaug.yaml	2	130276	2026-04-27T06:41:20+0000	2026-04-27 07:15:35	0.9528	Partial
+5	analyzed	cifar10_iter005_adamw	configs/ablation/iter005_adamw.yaml	0	140545	2026-04-27T07:39:23+0000	2026-04-27 08:15:12	0.9379	Failure
+6	analyzed	cifar10_iter006_long_train	configs/ablation/iter006_long_train.yaml	1	141201	2026-04-27T07:45:53+0000	2026-04-27 08:42:09	0.9465	Failure
+7	analyzed	cifar10_iter007_multistep	configs/ablation/iter007_multistep.yaml	0	156921	2026-04-27T13:15:22+0000	2026-04-27 13:49:45	0.9431	Failure
+8	analyzed	cifar10_iter008_autoaug_seed4078	configs/ablation/iter008_autoaug_seed4078.yaml	1	157773	2026-04-27T13:21:59+0000	2026-04-27 13:56:57	0.9497	Partial
+9	analyzed	cifar10_iter009_std_aug_seed4078	configs/ablation/iter009_std_aug_seed4078.yaml	2	158975	2026-04-27T13:28:22+0000	2026-04-27 14:03:00	0.9478	Noise
+10	running	cifar10_iter010_autoaug_lr05	configs/ablation/iter010_autoaug_lr05.yaml	0	164371	2026-04-27T13:50:55+0000			
