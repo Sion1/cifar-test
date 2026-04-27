@@ -18,8 +18,9 @@
 #   AUTORES_MIN_FREE_MB         8000   ← only consider GPUs with this much free
 #                                       (sized for the CIFAR-10 ResNet-34 demo,
 #                                        which needs ~2-3 GB. Raise for larger
-#                                        models — e.g. 22000 for ViT-B at 448²,
-#                                        24000 for DINO + attribute prototype)
+#                                        models — e.g. 22000 for ViT-B-scale
+#                                        backbones, 24000+ for full ViT/L or
+#                                        any model > ~15 GB activations)
 #   AUTORES_PER_PROCESS_FOOTPRINT_MB   ← OOM preflight cap (in MB)
 #   AUTORES_LAUNCH_COOLDOWN_S  30      ← refuse if last launch was < N s ago (set 0 to disable)
 #   AUTORES_ALLOW_GPU_STACK    0       ← if 1, allow same-GPU stacking (escape hatch)

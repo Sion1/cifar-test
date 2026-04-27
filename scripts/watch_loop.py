@@ -123,8 +123,9 @@ def panel_ledger(rows: list[dict]) -> str:
     if other:
         summary.append(c(GRY, f"other={other}"))
     out.append("  " + "  ".join(summary))
-    # best metric so far (column 9)
-    metric_col = "best_metric" if "best_metric" in (rows[0].keys() if rows else []) else "best_h"
+    # best metric so far (column 9 — name varies by project)
+    keys = rows[0].keys() if rows else []
+    metric_col = next((k for k in ("best_metric", "best_acc", "best_f1") if k in keys), "best_metric")
     nums = []
     for r in rows:
         v = r.get(metric_col, "")

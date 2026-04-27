@@ -331,15 +331,15 @@ CRITICAL ORDERING (write skeleton FIRST so timeout doesn't lose all work):
 3. **WRITE logs/iteration_$ITER_PAD.md NOW** with §1-§4 + §6 verdict + §7 + §8 filled
    (use metrics from step 2; per_class.csv content can be sketched from prior knowledge or
    marked "TBD pending viz"). This is the SKELETON — must exist on disk after step 3.
-4. **Update state/iterations.tsv NOW** (set \$2=analyzed, \$9=best_h, \$10=verdict). The
+4. **Update state/iterations.tsv NOW** (set \$2=analyzed, \$9=<your project's primary metric, e.g. best_acc / best_f1 / best_metric>, \$10=verdict). The
    defensive guard checks for the .md file's existence; once steps 3+4 are done, even if
    the rest times out, this iter is preserved.
-5. Generate the 4 mandatory visualizations into figs/iter_$ITER_PAD/ — per_class.csv first
-   (most informative for verdict), then gamma_sweep.png, then tsne.png, then attn.png last
-   (heaviest, can be skipped if running short on time).
+5. Generate the visualizations your project requires into figs/iter_$ITER_PAD/. The shipped
+   demo's set is: per_class.csv (per-class accuracy, most informative for verdict), tsne.png
+   (feature-space t-SNE), cam.png (Grad-CAM attention). Adapt this list in program.md §4
+   for your domain — keep per_class.csv first because it directly supports the verdict.
    IMPORTANT — VIZ GPU SELECTION: viz scripts auto-pick the least-loaded GPU when
-   CUDA_VISIBLE_DEVICES is unset (skipping GPU 0 by default). Do NOT hard-code CUDA_VISIBLE_DEVICES.
-   Copy per_class_delta_iter*.py from an existing one to inherit the auto-pick block.
+   CUDA_VISIBLE_DEVICES is unset. Do NOT hard-code CUDA_VISIBLE_DEVICES.
 6. Re-edit logs/iteration_$ITER_PAD.md §5 to fold in actual viz takeaways (replacing TBD).
 7. Append a new "### Iteration $ITER_PAD" subsection to CLAUDE.md's "Documented findings" with a 1-paragraph lesson.
 8. Exit (don't propose next experiment; the next loop tick handles that).
@@ -484,8 +484,8 @@ DIRECTION="${AUTORES_TARGET_DIRECTION:-max}"
 LAUNCHED=$(awk -F'\t' 'NR>1 && $1 ~ /^[0-9]+$/ {c++} END{print c+0}' state/iterations.tsv)
 FAILED_RECENT=$(awk -F'\t' 'NR>1 && $1 ~ /^[0-9]+$/' state/iterations.tsv \
     | sort -k1n | tail -"$WIN" | awk -F'\t' '$10 == "Failure"' | wc -l)
-# state.tsv column 9 is the iter's primary metric (named best_h / best_metric /
-# best_acc / etc. depending on your launcher). Direction-aware best-so-far:
+# state.tsv column 9 is the iter's primary metric (column-name varies by
+# project: best_metric / best_acc / best_f1 / etc.). Direction-aware best-so-far:
 if [ "$DIRECTION" = "min" ]; then
     BEST_METRIC=$(awk -F'\t' 'NR>1 && $9 != "" {print $9}' state/iterations.tsv | sort -n  | head -1)
 else
@@ -644,7 +644,7 @@ fi
 cat > "$PROMPT_FILE" <<EOF
 You are in autoresearch loop mode. It's time to propose iteration $NEXT_PAD.
 $CONSENSUS_HINT
-YOUR TASK: Propose ONE new experiment targeting SUN H improvement, create its config, and launch it via run_experiment.sh.
+YOUR TASK: Propose ONE new experiment targeting your project's primary metric (defined in program.md §Goal), create its config, and launch it via run_experiment.sh.
 
 STEPS (in order):
 1. Read state/user_summaries.md and state/user_summary.md FIRST if they exist, then program.md completely, then CLAUDE.md, then all files in logs/iteration_*.md (may be none on first iter). Treat user summaries as the user's highest-priority steering notes unless they conflict with HARD CONSTRAINTS or binding consensus guidance.

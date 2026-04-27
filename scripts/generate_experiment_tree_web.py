@@ -36,7 +36,7 @@ class IterRow:
     pid: str
     started_at: str
     finished_at: str
-    best_metric: str   # column 9 of state.tsv — name varies by launcher (best_metric / best_h / best_acc / ...)
+    best_metric: str   # column 9 of state.tsv — name varies by project (best_metric / best_acc / best_f1 / ...)
     verdict: str
 
 
@@ -82,8 +82,8 @@ def read_state(path: Path) -> list[IterRow]:
                     finished_at=raw.get("finished_at", ""),
                     # state.tsv column 9: try common names, fall back to whatever the launcher used
                     best_metric=(raw.get("best_metric")
-                                 or raw.get("best_h")
                                  or raw.get("best_acc")
+                                 or raw.get("best_f1")
                                  or list(raw.values())[8] if len(raw) > 8 else ""),
                     verdict=raw.get("verdict", ""),
                 )
@@ -154,16 +154,6 @@ def parse_metric_table(report: str) -> dict[str, str]:
     return metrics
 
 
-def load_gamma_json(iter_id: int) -> dict[str, Any]:
-    path = ROOT / "figs" / f"iter_{iter_id:03d}" / "gamma_sweep.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
 def load_ckpt_metrics(exp_name: str) -> dict[str, Any]:
     """Best-effort checkpoint metric loading for running jobs.
 
@@ -174,12 +164,11 @@ def load_ckpt_metrics(exp_name: str) -> dict[str, Any]:
     except Exception:
         return {}
     # Try common output-root layouts. Adapt for your launcher if it writes
-    # checkpoints elsewhere (e.g. add `runs_<your_pkg>/<exp>/best.pth`).
+    # checkpoints elsewhere.
     candidates: list[Path] = []
-    for root in ("runs", "runs_autoresearch"):
+    for root in ("runs",):
         candidates += sorted((ROOT / root / exp_name).glob("*/best.pth"))
         candidates += sorted((ROOT / root / exp_name).glob("best.pth"))
-        candidates += sorted((ROOT / root / exp_name).glob("*/best_h.pth"))   # legacy
         candidates += sorted((ROOT / root / exp_name).glob("*/final.pth"))
         candidates += sorted((ROOT / root / exp_name).glob("final.pth"))
     if not candidates:
@@ -273,7 +262,6 @@ def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, siblin
     report_path = ROOT / "logs" / f"iteration_{iter_pad}.md"
     report = report_path.read_text(encoding="utf-8", errors="replace") if report_path.exists() else ""
     cfg = config_values(row.config)
-    gamma = load_gamma_json(row.iter_id)
     ckpt = load_ckpt_metrics(row.exp_name) if row.status == "running" or not row.best_metric else {}
     parsed = parse_metric_table(report) if report else {}
 
@@ -308,10 +296,13 @@ def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, siblin
         detail_bits.append(row.verdict)
     elif row.status:
         detail_bits.append(row.status)
-    if cfg.get("ap_loss_weight"):
-        detail_bits.append(f"w={cfg['ap_loss_weight']}")
-    if cfg.get("feature_type"):
-        detail_bits.append(cfg["feature_type"])
+    # Project-specific quick-glance config bits (override these for your
+    # domain — pick the 1-2 hyperparameters that distinguish ablation cells).
+    # Demo: optimizer + augmentation.
+    if cfg.get("optimizer"):
+        detail_bits.append(cfg["optimizer"])
+    if cfg.get("augmentation"):
+        detail_bits.append(f"aug={cfg['augmentation']}")
     detail = " · ".join(detail_bits)
 
     links = []
@@ -321,12 +312,13 @@ def build_iter_node(row: IterRow, parent_x: int, parent_y: int, idx: int, siblin
         links.append({"label": "config", "href": f"../{row.config}"})
     fig_dir = ROOT / "figs" / f"iter_{iter_pad}"
     visuals = []
+    # Common viz filenames the dashboard looks for. Adapt this list for your
+    # project's viz scripts. Demo: tsne.png + cam.png + per_class.csv.
     for filename, label in [
-        ("gamma_sweep.png", "gamma"),
         ("tsne.png", "t-SNE"),
-        ("attn.png", "attention"),
-        ("attention_maps.png", "attention_maps"),
-        ("tsne_attr_pred.png", "attr t-SNE"),
+        ("cam.png", "Grad-CAM"),
+        ("per_class.png", "per-class"),
+        ("confusion.png", "confusion"),
     ]:
         if (fig_dir / filename).exists():
             href = f"../figs/iter_{iter_pad}/{filename}"
@@ -1175,8 +1167,7 @@ def bundle_assets(tree: dict[str, Any], out_path: Path, *,
 
     Optimizations:
       • Content-hash dedup — two source files with identical bytes share ONE
-        copy in the bundle (e.g. attn.png and attention_maps.png are usually
-        byte-equal copies of the same render; saves ~30 MB on the SUN data).
+        copy in the bundle. On large iter sets, this can save tens of MB.
       • CSVs (per_class.csv, per_class_delta*.csv) are skipped by default —
         they're data dumps, not web assets, and are still accessible from the
         repo if someone really wants them.
