@@ -1,0 +1,30 @@
+# Cell C — +autoaug. Single-axis delta vs Cell B (iter 3):
+#   data.augmentation: standard → autoaugment
+# Tests the upper end of A1 (data augmentation). Pairs with iter 2 (none) and
+# iter 3 (standard) to give a clean none→standard→autoaug ladder for the
+# augmentation axis. Everything else identical to iter003_std_aug.yaml.
+exp_name: cifar10_iter004_autoaug
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: autoaugment
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model:
+  arch: resnet34
+  num_classes: 10
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+
+output:
+  root: runs
