@@ -1,0 +1,26 @@
+# Ablation: Cell C 2-seed replay (seed=4078) — hardening step.
+# Single-axis delta from iter002_autoaug recipe: seed 42 → 4078, everything
+# else identical (autoaug, sgd 0.1 mom 0.9 nesterov wd 5e-4, cosine, 60 ep).
+# Purpose: harden the C−B = +0.42 pp gap before crowning Cell C as the
+# phase-1 winner, per program.md "After phase 1: pick top 2, run with
+# seed=4078, report 2-seed mean".
+exp_name: cifar10_iter008_autoaug_s4078
+seed: 4078
+
+data:
+  root: ./data/cifar10
+  augmentation: autoaugment
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+output: { root: runs }
