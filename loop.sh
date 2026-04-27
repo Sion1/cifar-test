@@ -13,6 +13,11 @@
 set -u
 cd "$(dirname "$0")"
 
+# Ensure runtime dirs exist before anything writes to them. logs/ and state/
+# aren't tracked in git (see .gitignore), so a fresh clone has neither —
+# and 'logs/driver.log' gets written from the very first log() call below.
+mkdir -p logs state
+
 # Optional per-tick env overrides — edit state/.consensus.env (or
 # legacy .crossval.env) to change AUTORES_CONSENSUS_* / AUTORES_CROSSVAL_*
 # without restarting the tmux loop. Picks up on the NEXT tick.
@@ -256,10 +261,12 @@ for r in rows:
         # Can't read the log (CIFS orphan-inode bug — happens when
         # working-tree files get severed by stash/checkout while train.py
         # holds an open fd). Fallback: if the run's final.pth exists in
-        # runs_autoresearch/, training has finished — mark completed
+        # runs/, training has finished — mark completed
         # without a finish_ts (analysis will read final.pth directly).
         # If neither pid nor final.pth → still running, will retry next tick.
-        ckpt_glob = glob.glob(f'runs_autoresearch/{exp_name}/*/final.pth')
+        # Note: `runs/<exp>/final.pth` (no subdir) is the demo's layout;
+        # `runs/<exp>/*/final.pth` covers projects that nest by run-id.
+        ckpt_glob = glob.glob(f'runs/{exp_name}/final.pth') + glob.glob(f'runs/{exp_name}/*/final.pth')
         if ckpt_glob:
             r[1] = 'completed'
             if r[7] == '':
@@ -320,19 +327,19 @@ YOUR TASK: Analyze this single experiment per program.md §4 (mandatory visualiz
 
 CRITICAL ORDERING (write skeleton FIRST so timeout doesn't lose all work):
 1. Read state/user_summaries.md and state/user_summary.md FIRST if they exist, then program.md, CLAUDE.md, last 3 logs/iteration_*.md, state/iterations.tsv. Treat user summaries as the user's highest-priority steering notes unless they conflict with HARD CONSTRAINTS.
-2. Parse metrics from runs_autoresearch/<exp_name>/<subdir>/final.pth (torch load, ckpt['metrics']).
+2. Parse metrics from runs/<exp_name>/final.pth (or runs/<exp_name>/<subdir>/final.pth if your project nests by run-id) — torch load, ckpt['metrics'].
 3. **WRITE logs/iteration_$ITER_PAD.md NOW** with §1-§4 + §6 verdict + §7 + §8 filled
    (use metrics from step 2; per_class.csv content can be sketched from prior knowledge or
    marked "TBD pending viz"). This is the SKELETON — must exist on disk after step 3.
-4. **Update state/iterations.tsv NOW** (set \$2=analyzed, \$9=best_h, \$10=verdict). The
+4. **Update state/iterations.tsv NOW** (set \$2=analyzed, \$9=<your project's primary metric, e.g. best_acc / best_f1 / best_metric>, \$10=verdict). The
    defensive guard checks for the .md file's existence; once steps 3+4 are done, even if
    the rest times out, this iter is preserved.
-5. Generate the 4 mandatory visualizations into figs/iter_$ITER_PAD/ — per_class.csv first
-   (most informative for verdict), then gamma_sweep.png, then tsne.png, then attn.png last
-   (heaviest, can be skipped if running short on time).
+5. Generate the visualizations your project requires into figs/iter_$ITER_PAD/. The shipped
+   demo's set is: per_class.csv (per-class accuracy, most informative for verdict), tsne.png
+   (feature-space t-SNE), cam.png (Grad-CAM attention). Adapt this list in program.md §4
+   for your domain — keep per_class.csv first because it directly supports the verdict.
    IMPORTANT — VIZ GPU SELECTION: viz scripts auto-pick the least-loaded GPU when
-   CUDA_VISIBLE_DEVICES is unset (skipping GPU 0 by default). Do NOT hard-code CUDA_VISIBLE_DEVICES.
-   Copy per_class_delta_iter*.py from an existing one to inherit the auto-pick block.
+   CUDA_VISIBLE_DEVICES is unset. Do NOT hard-code CUDA_VISIBLE_DEVICES.
 6. Re-edit logs/iteration_$ITER_PAD.md §5 to fold in actual viz takeaways (replacing TBD).
 7. Append a new "### Iteration $ITER_PAD" subsection to CLAUDE.md's "Documented findings" with a 1-paragraph lesson.
 8. Exit (don't propose next experiment; the next loop tick handles that).
@@ -347,13 +354,31 @@ EOF
     # incident produced ZERO transcript in driver.log because the | tee broke;
     # writing to a dedicated file via redirect is more robust on CIFS).
     ITER_TRANSCRIPT="logs/_analyze_${ITER_PAD}.transcript.log"
+
+    # Heartbeat: log "still running" every 60 s while analyze is in flight, so a
+    # user tailing driver.log can tell the difference between "stuck" and "thinking".
+    # Without this, driver.log is silent for 5-10 min while claude works.
     timeout --signal=TERM 1800 claude -p "$(cat "$PROMPT_FILE")" \
-        --model claude-opus-4-7 \
+        --model "${AUTORES_CLAUDE_MODEL:-claude-opus-4-7}" \
         --allowedTools "Bash,Read,Edit,Write,Glob,Grep" \
         --permission-mode acceptEdits \
         --max-turns 150 \
-        > >(tee -a "$LOG" "$ITER_TRANSCRIPT") 2>&1
+        > >(tee -a "$LOG" "$ITER_TRANSCRIPT") 2>&1 &
+    _ANALYZE_PID=$!
+    _HEARTBEAT_T0=$(date +%s)
+    (
+        while kill -0 "$_ANALYZE_PID" 2>/dev/null; do
+            sleep 60
+            kill -0 "$_ANALYZE_PID" 2>/dev/null || break
+            _ELAPSED=$(( $(date +%s) - _HEARTBEAT_T0 ))
+            log "  ↻ analyze iter $ITER_PAD still running (elapsed: ${_ELAPSED}s, timeout: 1800s)"
+        done
+    ) 9>&- &
+    _HEARTBEAT_PID=$!
+    disown $_HEARTBEAT_PID 2>/dev/null || true
+    wait "$_ANALYZE_PID"
     _RC=$?
+    kill "$_HEARTBEAT_PID" 2>/dev/null || true
     rm -f "$PROMPT_FILE"
     if [ "$_RC" -eq 124 ]; then
         log "Analysis timeout (iter $ITER_PAD) — claude -p killed after 30 min (transcript: $ITER_TRANSCRIPT)"
@@ -426,7 +451,13 @@ PYEOF
     # fresh analyzed row + figs/. Background spawn so we don't delay the
     # exit; the next tick proceeds normally.
     _regen_dashboard_bg "post-analyze iter ${ITER_PAD}"
-    exit 0
+    # Signal the outer wrapper that the next tick should fire IMMEDIATELY
+    # (skip the usual `sleep 300`). Without this, an analyze tick that took
+    # 5-10 min still triggers a fresh 5-min sleep before propose, so users
+    # wait 10-15 min between launches when the system could have proposed
+    # right away. The wrapper checks this exit code and skips its sleep.
+    log "analyze done — requesting fast next tick (exit 7)"
+    exit 7
 fi
 
 # -------------------------------------------------
@@ -437,24 +468,42 @@ fi
 # exit at this gate every tick before reaching Step 2 analysis).
 # -------------------------------------------------
 # Configurable STOP thresholds (override per project via env vars):
-#   AUTORES_MAX_ITERATIONS         iteration budget (default 80)
+#   AUTORES_MAX_ITERATIONS         iteration budget (default 20 — sized for the
+#                                  CIFAR-10 demo to fit in a half-day; raise to
+#                                  50-100 for a serious research project)
 #   AUTORES_RECENT_FAIL_WINDOW     window length (default 5)
 #   AUTORES_RECENT_FAIL_LIMIT      consecutive failures within window (default 3)
 #   AUTORES_TARGET_METRIC          target value of state.tsv column 9
 #                                  (default empty = disabled)
 #   AUTORES_TARGET_DIRECTION       "max" (higher is better) | "min" (lower is better)
 #                                  (default "max")
-MAX_ITER="${AUTORES_MAX_ITERATIONS:-80}"
+#
+# Graceful manual stop: `touch state/.stop` — the next tick reads it,
+# logs the stop reason, removes the sentinel, and exits. Already-running
+# trainings are left to finish on their own; the loop just doesn't propose
+# anything new. This is the recommended way to halt mid-run.
+MAX_ITER="${AUTORES_MAX_ITERATIONS:-20}"
 WIN="${AUTORES_RECENT_FAIL_WINDOW:-5}"
 FAIL_LIMIT="${AUTORES_RECENT_FAIL_LIMIT:-3}"
 TARGET="${AUTORES_TARGET_METRIC:-}"
 DIRECTION="${AUTORES_TARGET_DIRECTION:-max}"
 
+# Manual stop sentinel — discovered in the reproduction transcript: users
+# need a way to halt the loop without lowering MAX_ITER below LAUNCHED
+# (which works but is roundabout). `touch state/.stop` is more direct.
+if [ -f state/.stop ]; then
+    log "STOP: state/.stop sentinel found — graceful manual halt requested."
+    log "      already-running trainings will finish; no new ones will be proposed."
+    rm -f state/.stop
+    _regen_dashboard_bg "stop · manual sentinel"
+    exit 0
+fi
+
 LAUNCHED=$(awk -F'\t' 'NR>1 && $1 ~ /^[0-9]+$/ {c++} END{print c+0}' state/iterations.tsv)
 FAILED_RECENT=$(awk -F'\t' 'NR>1 && $1 ~ /^[0-9]+$/' state/iterations.tsv \
     | sort -k1n | tail -"$WIN" | awk -F'\t' '$10 == "Failure"' | wc -l)
-# state.tsv column 9 is the iter's primary metric (named best_h / best_metric /
-# best_acc / etc. depending on your launcher). Direction-aware best-so-far:
+# state.tsv column 9 is the iter's primary metric (column-name varies by
+# project: best_metric / best_acc / best_f1 / etc.). Direction-aware best-so-far:
 if [ "$DIRECTION" = "min" ]; then
     BEST_METRIC=$(awk -F'\t' 'NR>1 && $9 != "" {print $9}' state/iterations.tsv | sort -n  | head -1)
 else
@@ -462,7 +511,7 @@ else
 fi
 
 if [ "$LAUNCHED" -ge "$MAX_ITER" ]; then
-    log "STOP: $MAX_ITER iterations launched."
+    log "STOP: iteration budget reached ($LAUNCHED/$MAX_ITER). Raise AUTORES_MAX_ITERATIONS to continue."
     _regen_dashboard_bg "stop · launched cap"
     exit 0
 fi
@@ -484,7 +533,7 @@ fi
 # -------------------------------------------------
 # Step 4: concurrent-training cap (allow parallel across GPUs AND on same GPU)
 # -------------------------------------------------
-MAX_CONCURRENT="${MAX_CONCURRENT:-5}"   # override by exporting MAX_CONCURRENT
+MAX_CONCURRENT="${MAX_CONCURRENT:-4}"   # default = typical 4-GPU server; override via env
 RUNNING=$(awk -F'\t' 'NR>1 && $2 == "running" {c++} END{print c+0}' state/iterations.tsv)
 if [ "$RUNNING" -ge "$MAX_CONCURRENT" ]; then
     log "Already $RUNNING training(s) running (cap=$MAX_CONCURRENT). Waiting for next tick."
@@ -613,7 +662,7 @@ fi
 cat > "$PROMPT_FILE" <<EOF
 You are in autoresearch loop mode. It's time to propose iteration $NEXT_PAD.
 $CONSENSUS_HINT
-YOUR TASK: Propose ONE new experiment targeting SUN H improvement, create its config, and launch it via run_experiment.sh.
+YOUR TASK: Propose ONE new experiment targeting your project's primary metric (defined in program.md §Goal), create its config, and launch it via run_experiment.sh.
 
 STEPS (in order):
 1. Read state/user_summaries.md and state/user_summary.md FIRST if they exist, then program.md completely, then CLAUDE.md, then all files in logs/iteration_*.md (may be none on first iter). Treat user summaries as the user's highest-priority steering notes unless they conflict with HARD CONSTRAINTS or binding consensus guidance.
@@ -630,7 +679,7 @@ EOF
 # would otherwise block the entire while-true loop (seen on 2026-04-24 where
 # one claude -p lingered 17+ min after iter008 was already launched).
 timeout --signal=TERM 900 claude -p "$(cat "$PROMPT_FILE")" \
-    --model claude-opus-4-7 \
+    --model "${AUTORES_CLAUDE_MODEL:-claude-opus-4-7}" \
     --allowedTools "Bash,Read,Edit,Write,Glob,Grep" \
     --permission-mode acceptEdits \
     --max-turns 60 \

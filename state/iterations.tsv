@@ -1,0 +1,5 @@
+iter	status	exp_name	config	gpu	pid	started_at	finished_at	best_metric	verdict
+0	analyzed	cifar10_baseline	configs/cifar10_resnet34.yaml	0	125205	2026-04-27T06:12:48+0000	2026-04-27 06:14:13	0.2911	Bug
+2	analyzed	cifar10_iter002_bare_baseline	configs/ablation/iter002_bare_baseline.yaml	0	127291	2026-04-27T06:29:14+0000	2026-04-27 07:03:18	0.8870	Success
+3	analyzed	cifar10_iter003_std_aug	configs/ablation/iter003_std_aug.yaml	1	129062	2026-04-27T06:35:15+0000	2026-04-27 07:09:14	0.9481	Success
+4	analyzed	cifar10_iter004_autoaug	configs/ablation/iter004_autoaug.yaml	2	130276	2026-04-27T06:41:20+0000	2026-04-27 07:15:35	0.9528	Partial
