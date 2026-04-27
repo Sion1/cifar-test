@@ -1,0 +1,28 @@
+# Ablation iter 005 — Cell D: AdamW optimizer
+# Single-axis delta vs. iter004_std.yaml (Cell B):
+#   training.optimizer:    sgd     -> adamw
+#   training.lr:           0.1     -> 1.0e-3   (catalog A4: AdamW range {1e-3, 5e-4})
+#   training.weight_decay: 5.0e-4  -> 1.0e-4   (catalog A5: {5e-4, 1e-4, 0}; lighter wd typical for AdamW)
+#   (momentum/nesterov keys dropped — irrelevant for AdamW)
+# Everything else (standard aug, cosine, 60 ep, seed=42) held fixed so any
+# delta vs. Cell B is attributable to the optimizer-family swap (A2).
+exp_name: cifar10_iter005_adamw
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+
+training:
+  optimizer: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  epochs: 60
+
+output: { root: runs }
