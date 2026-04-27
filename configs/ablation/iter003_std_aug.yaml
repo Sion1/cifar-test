@@ -1,0 +1,29 @@
+# Cell B — +std aug. Single-axis delta vs Cell A (iter 2):
+#   data.augmentation: none → standard
+# Quantifies the standalone contribution of A1 (data augmentation) on top of
+# the bare baseline. Everything else identical to iter002_bare_baseline.yaml.
+exp_name: cifar10_iter003_std_aug
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model:
+  arch: resnet34
+  num_classes: 10
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+
+output:
+  root: runs

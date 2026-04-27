@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Evaluate a saved checkpoint on the CIFAR-10 test set."""
 from __future__ import annotations
-import argparse, pathlib, sys, torch, torch.nn as nn
+import argparse, os, pathlib, sys, torch, torch.nn as nn
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from src.cifar_demo.data import build_cifar10
 from src.cifar_demo.model import build_resnet34
@@ -12,7 +12,7 @@ from src.cifar_demo.utils import pick_device
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True, help="path to best.pth or final.pth")
-    ap.add_argument("--data-root", default="/data/cifar10")
+    ap.add_argument("--data-root", default=os.environ.get("AUTORES_DATA_ROOT", "./data/cifar10"))
     ap.add_argument("--batch-size", type=int, default=256)
     args = ap.parse_args()
 
