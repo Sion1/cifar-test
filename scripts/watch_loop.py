@@ -107,7 +107,28 @@ def panel_sentinel_lock() -> str:
 
 
 def panel_ledger(rows: list[dict]) -> str:
-    out = [c(BLD, f"state/iterations.tsv  ·  {len(rows)} iters total")]
+    # Iter budget progress, surfaced so users don't have to grep loop.sh to
+    # learn what AUTORES_MAX_ITERATIONS is set to. Default fallback matches
+    # loop.sh's default (20). state/.env may override; we read it best-effort.
+    max_iter_default = 20
+    max_iter = max_iter_default
+    env_path = pathlib.Path("state/.env")
+    if env_path.exists():
+        for line in env_path.read_text(errors="replace").splitlines():
+            m = re.match(r"\s*export\s+AUTORES_MAX_ITERATIONS=(\S+)", line)
+            if m:
+                try:
+                    max_iter = int(m.group(1).strip().strip('"').strip("'"))
+                except ValueError:
+                    pass
+    launched = sum(1 for r in rows if str(r.get("iter", "")).isdigit())
+    budget_str = f"{launched}/{max_iter}"
+    if launched >= max_iter:
+        budget_str = c("31", budget_str + " · STOP fired")
+    elif launched >= max_iter * 0.8:
+        budget_str = c("33", budget_str + " · 80% used")
+
+    out = [c(BLD, f"state/iterations.tsv  ·  {len(rows)} iters total  ·  budget {budget_str}")]
     if not rows:
         out.append("  " + c(GRY, "(empty — no experiments launched yet)"))
         return "\n".join(out)
@@ -123,8 +144,9 @@ def panel_ledger(rows: list[dict]) -> str:
     if other:
         summary.append(c(GRY, f"other={other}"))
     out.append("  " + "  ".join(summary))
-    # best metric so far (column 9)
-    metric_col = "best_metric" if "best_metric" in (rows[0].keys() if rows else []) else "best_h"
+    # best metric so far (column 9 — name varies by project)
+    keys = rows[0].keys() if rows else []
+    metric_col = next((k for k in ("best_metric", "best_acc", "best_f1") if k in keys), "best_metric")
     nums = []
     for r in rows:
         v = r.get(metric_col, "")
@@ -225,6 +247,47 @@ def panel_consensus() -> str:
 
 
 # ------------------------------------------------------------------ main
+def panel_current_activity() -> str:
+    """What is the loop currently doing? Distinguishes 'idle / sleeping'
+    from 'analyze in flight (Y minutes)' from 'propose in flight'. Without
+    this, a 5-min analyze tick looks identical to a stuck loop in the
+    other panels."""
+    out = [c("1;36", "current loop activity")]
+
+    # Find the active loop.sh tick + any claude -p subprocesses.
+    # We look at /proc — psutil isn't a guaranteed dep.
+    procs_loop = run(["pgrep", "-af", r"bash loop\.sh\b"]).strip().splitlines()
+    procs_claude = run(["pgrep", "-af", r"claude -p .*loop mode"]).strip().splitlines()
+    procs_train = run(["pgrep", "-af", r"train\.py.*--config"]).strip().splitlines()
+
+    if not procs_loop:
+        out.append(f"  {c('33', '○ no bash loop.sh tick currently running')}  (sleep window between ticks)")
+        return "\n".join(out)
+
+    # Loop tick is alive. Figure out elapsed time of the OLDEST loop.sh
+    # process — that's the current tick.
+    pid = procs_loop[0].split()[0]
+    et = run(["ps", "-o", "etime=", "-p", pid]).strip()
+    out.append(f"  {c('32', '● bash loop.sh tick alive')}  pid={pid}  elapsed={et}")
+
+    if procs_claude:
+        cpid = procs_claude[0].split()[0]
+        cet = run(["ps", "-o", "etime=", "-p", cpid]).strip()
+        # Try to extract iter num from the prompt for clarity.
+        prompt_text = procs_claude[0]
+        m = re.search(r"[Ii]teration[_ ]?(\d{3})", prompt_text)
+        iter_str = f" iter {m.group(1)}" if m else ""
+        out.append(f"  {c('33', '↻ claude -p analyze/propose in flight')}{iter_str}  pid={cpid}  elapsed={cet}  (timeout 30 min)")
+    if procs_train:
+        for line in procs_train[:3]:
+            tpid = line.split()[0]
+            tet = run(["ps", "-o", "etime=", "-p", tpid]).strip()
+            out.append(f"  {c('36', '⛁ train.py running')}  pid={tpid}  elapsed={tet}")
+    if not procs_claude and not procs_train:
+        out.append(f"  {c('90', '  (no claude/train subprocess — tick is in sanity / reap / sleep phase)')}")
+    return "\n".join(out)
+
+
 def render_screen() -> str:
     rows = read_tsv()
     width = shutil.get_terminal_size((120, 30)).columns
@@ -234,6 +297,8 @@ def render_screen() -> str:
         panel_wrapper(),
         "",
         panel_sentinel_lock(),
+        "",
+        panel_current_activity(),
         "",
         panel_ledger(rows),
         "",

@@ -1,0 +1,36 @@
+# Cell F — long-train. Single-axis delta vs Cell B (iter 3):
+#   training.epochs: 60 → 100
+# Tests A6 (epochs) at the std-aug recipe. Everything else (sgd 0.1, momentum
+# 0.9, wd 5e-4, nesterov, cosine, std aug, seed=42, batch_size=128, model)
+# identical to iter003_std_aug.yaml so any Δ vs Cell B (0.9481) is attributable
+# to the longer schedule. Iter 004 (Cell C, autoaug) gap-collapsed train→test
+# from 5.2 pp → 1.0 pp at 60 ep, suggesting the recipe has not saturated; Cell
+# F probes whether 100 ep on the std-aug regularizer (which still has a 5.2 pp
+# gap) buys further headroom. Cell F is the highest-leverage remaining matrix
+# cell per logs/iteration_004.md §7. Iter 005 (Cell D, adamw) is running in
+# parallel on GPU 0 — this run picks a different GPU via run_experiment.sh.
+exp_name: cifar10_iter006_long_train
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: standard
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model:
+  arch: resnet34
+  num_classes: 10
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 100
+
+output:
+  root: runs
