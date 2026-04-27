@@ -1,0 +1,6 @@
+iter	status	exp_name	config	gpu	pid	started_at	finished_at	best_metric	verdict
+0	analyzed	cifar10_resnet34	configs/cifar10_resnet34.yaml	2	107617	2026-04-27T09:07:34+0900	2026-04-27 09:08:32	0.3045	noise
+2	analyzed	iter002_autoaug	configs/ablation/iter002_autoaug.yaml	2	109706	2026-04-27T09:21:45+0900	2026-04-27 09:42:49	0.9519	success
+3	analyzed	iter003_bare	configs/ablation/iter003_bare.yaml	1	110785	2026-04-27T09:27:03+0900	2026-04-27 09:47:12	0.8828	baseline
+4	running	iter004_std	configs/ablation/iter004_std.yaml	0	111637	2026-04-27T09:29:15+0900			
+5	running	iter005_adamw	configs/ablation/iter005_adamw.yaml	3	112754	2026-04-27T09:31:31+0900			

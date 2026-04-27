@@ -1,0 +1,28 @@
+# Ablation iter 003 — Cell A: bare baseline (no augmentation)
+# Establishes the FLOOR for the §Required-ablation-strategy matrix in program.md.
+# Single-axis delta vs. configs/cifar10_resnet34.yaml (which is Cell B):
+#   data.augmentation: standard -> none
+# Everything else (sgd, lr=0.1, wd=5e-4, cosine, 60 epochs, seed=42, nesterov)
+# held fixed so any later cell's gain is attributable to its single delta vs A.
+exp_name: cifar10_iter003_bare
+seed: 42
+
+data:
+  root: ./data/cifar10
+  augmentation: none
+  batch_size: 128
+  num_workers: 4
+  download: true
+
+model: { arch: resnet34, num_classes: 10 }
+
+training:
+  optimizer: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+  nesterov: true
+  scheduler: cosine
+  epochs: 60
+
+output: { root: runs }
